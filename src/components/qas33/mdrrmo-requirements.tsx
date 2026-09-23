@@ -1,8 +1,8 @@
 "use client";
 
-// MDRRMO Console — Requirements configuration + Template preview
+// MDRRMO Console — References configuration + Template preview
 import { useState } from "react";
-import { FileText, ListChecks, Pencil, Paperclip } from "lucide-react";
+import { FileText, ListChecks, Lock, Pencil, Paperclip } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -19,16 +19,20 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/qas33/api";
+import { isSystemAdmin, type SessionInfo } from "@/lib/qas33/types";
+import { cn } from "@/lib/utils";
 import { ErrorAlert, TableSkeleton, useLoad } from "./mdrrmo-shared";
 
 type RequirementsData = Awaited<ReturnType<typeof api.adminRequirements>>;
 type SectionRow = RequirementsData["sections"][number];
 
-export default function MdrrmoRequirements() {
+export default function MdrrmoRequirements({ session }: { session: SessionInfo }) {
   const { toast } = useToast();
   const { data, loading, error, reload } = useLoad<RequirementsData>(() => api.adminRequirements());
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<SectionRow | null>(null);
+  // Only the System Administrator may configure references
+  const canEdit = isSystemAdmin(session.admin?.role);
 
   const update = async (payload: Record<string, unknown>, successTitle: string) => {
     setBusy(true);
@@ -52,16 +56,27 @@ export default function MdrrmoRequirements() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-xl font-semibold tracking-tight">Requirements &amp; Template</h1>
+        <h1 className="text-xl font-semibold tracking-tight">References &amp; Template</h1>
         <p className="text-sm text-muted-foreground">
-          Configure the BDRRMP template sections barangays must fill in — titles, required fields and upload rules
+          The BDRRMP template sections barangays must fill in — titles, required fields and upload rules
         </p>
       </header>
 
+      {!canEdit && (
+        <p className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+          <Lock className="h-4 w-4 shrink-0" aria-hidden="true" />
+          Reference configuration is managed by the System Administrator.
+        </p>
+      )}
+
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Template Sections &amp; Requirements</CardTitle>
-          <CardDescription>Changes apply immediately to all barangay forms for the current cycle.</CardDescription>
+          <CardTitle className="text-base">Template Sections &amp; References</CardTitle>
+          <CardDescription>
+            {canEdit
+              ? "Changes apply immediately to all barangay forms for the current cycle."
+              : "Read-only view of the configuration applied to all barangay forms."}
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0 pb-3">
           {error ? (
@@ -84,7 +99,7 @@ export default function MdrrmoRequirements() {
                     <TableHead className="text-center">Upload Required</TableHead>
                     <TableHead>Formats</TableHead>
                     <TableHead className="text-center">Max MB</TableHead>
-                    <TableHead className="pr-4 text-right">Edit</TableHead>
+                    {canEdit && <TableHead className="pr-4 text-right">Edit</TableHead>}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -97,28 +112,42 @@ export default function MdrrmoRequirements() {
                       </TableCell>
                       <TableCell className="text-center text-sm tabular-nums">{s.fieldCount}</TableCell>
                       <TableCell className="text-center">
-                        <Switch
-                          checked={s.required}
-                          disabled={busy}
-                          aria-label={`Toggle required for ${s.titleEn}`}
-                          onCheckedChange={(v) => void update({ key: s.key, required: v }, v ? "Section marked required" : "Section set optional")}
-                        />
+                        {canEdit ? (
+                          <Switch
+                            checked={s.required}
+                            disabled={busy}
+                            aria-label={`Toggle required for ${s.titleEn}`}
+                            onCheckedChange={(v) => void update({ key: s.key, required: v }, v ? "Section marked required" : "Section set optional")}
+                          />
+                        ) : (
+                          <span className={cn("text-xs font-medium", s.required ? "text-foreground" : "text-muted-foreground")}>
+                            {s.required ? "Yes" : "No"}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-center">
-                        <Switch
-                          checked={s.requiresUpload}
-                          disabled={busy}
-                          aria-label={`Toggle upload requirement for ${s.titleEn}`}
-                          onCheckedChange={(v) => void update({ key: s.key, requiresUpload: v }, v ? "File upload required" : "File upload optional")}
-                        />
+                        {canEdit ? (
+                          <Switch
+                            checked={s.requiresUpload}
+                            disabled={busy}
+                            aria-label={`Toggle upload requirement for ${s.titleEn}`}
+                            onCheckedChange={(v) => void update({ key: s.key, requiresUpload: v }, v ? "File upload required" : "File upload optional")}
+                          />
+                        ) : (
+                          <span className={cn("text-xs font-medium", s.requiresUpload ? "text-foreground" : "text-muted-foreground")}>
+                            {s.requiresUpload ? "Yes" : "No"}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{s.uploadFormats.join(", ")}</TableCell>
                       <TableCell className="text-center text-sm tabular-nums">{s.uploadMaxMB}</TableCell>
-                      <TableCell className="pr-4 text-right">
-                        <Button size="sm" variant="outline" onClick={() => setEditing(s)}>
-                          <Pencil className="h-3.5 w-3.5" /> Edit
-                        </Button>
-                      </TableCell>
+                      {canEdit && (
+                        <TableCell className="pr-4 text-right">
+                          <Button size="sm" variant="outline" onClick={() => setEditing(s)}>
+                            <Pencil className="h-3.5 w-3.5" /> Edit
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -135,7 +164,7 @@ export default function MdrrmoRequirements() {
             <FileText className="h-4 w-4 text-primary" /> Template Preview
           </CardTitle>
           <CardDescription>
-            How the BDRRMP template is presented to barangays — bilingual section titles with their field and upload requirements.
+            How the BDRRMP template is presented to barangays — bilingual section titles with their fields and upload rules.
           </CardDescription>
         </CardHeader>
         <CardContent>

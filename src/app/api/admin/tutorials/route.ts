@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/qas33/auth";
+import { requireAdminRole } from "@/lib/qas33/auth";
 import { logAudit } from "@/lib/qas33/audit";
 
 // GET — all tutorials (both languages, for management)
 export async function GET() {
-  const resolved = await requireAdmin();
+  const resolved = await requireAdminRole(["SYSTEM_ADMIN"]);
   if (!resolved || !resolved.admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "Only the System Administrator can manage tutorials." }, { status: 403 });
   }
   const tutorials = await db.tutorial.findMany({ orderBy: { order: "asc" } });
   return NextResponse.json({ tutorials });
@@ -15,9 +15,9 @@ export async function GET() {
 
 // PUT — update a tutorial { key, titleEn?, titleTl?, bodyEn?, bodyTl?, active? }
 export async function PUT(request: NextRequest) {
-  const resolved = await requireAdmin();
+  const resolved = await requireAdminRole(["SYSTEM_ADMIN"]);
   if (!resolved || !resolved.admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "Only the System Administrator can manage tutorials." }, { status: 403 });
   }
   const body = await request.json();
   const key = String(body.key || "");

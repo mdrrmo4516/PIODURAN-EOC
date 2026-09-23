@@ -14,6 +14,7 @@ import {
   FileCheck2,
   FileSignature,
   History,
+  Info,
   Loader2,
   MessageSquare,
   MessageSquarePlus,
@@ -59,7 +60,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { api, fieldLabel, formatDate, formatDateTime } from "@/lib/qas33/api";
-import type { AdminSubmissionDetail, ClientSection, CommentItem, FileMeta, TemplateFieldDef } from "@/lib/qas33/types";
+import {
+  canApproveBdrrmp,
+  canReviewBdrrmp,
+  normalizeAdminRole,
+  type AdminSubmissionDetail,
+  type ClientSection,
+  type CommentItem,
+  type FileMeta,
+  type SessionInfo,
+  type TemplateFieldDef,
+} from "@/lib/qas33/types";
 import { cn } from "@/lib/utils";
 import { CopyButton, ErrorAlert, FileStatusBadge, StatusBadge, fileSize, useLoad } from "./mdrrmo-shared";
 
@@ -87,14 +98,21 @@ function reviewActionBadge(action: string) {
 
 export default function MdrrmoReview({
   id,
+  session,
   onBack,
   onChanged,
 }: {
   id: string;
+  session: SessionInfo;
   onBack: () => void;
   onChanged?: () => void;
 }) {
   const { toast } = useToast();
+  // Role capabilities: Officer + Staff review; only the Officer approves / finalizes / archives;
+  // the System Administrator gets a read-only view.
+  const adminRole = normalizeAdminRole(session.admin?.role);
+  const roleCanReview = canReviewBdrrmp(adminRole);
+  const roleCanApprove = canApproveBdrrmp(adminRole);
   const { data: detail, loading, error, reload } = useLoad<AdminSubmissionDetail>(() => api.adminSubmission(id), id);
   const [tab, setTab] = useState("submission");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -145,14 +163,20 @@ export default function MdrrmoReview({
   }, [detail]);
 
   const st = detail?.submission.status;
-  const canStartReview = st === "SUBMITTED" || st === "RESUBMITTED";
   const reviewable = !!st && ["SUBMITTED", "RESUBMITTED", "UNDER_REVIEW", "NEEDS_REVISION"].includes(st);
-  const canRequestRevision = !!st && ["SUBMITTED", "RESUBMITTED", "UNDER_REVIEW"].includes(st);
-  const canApprove = reviewable;
-  const canFinalize = st === "APPROVED";
-  const canRegenerate = st === "READY_FOR_DOWNLOAD";
-  const canArchive = !!st && ["APPROVED", "READY_FOR_DOWNLOAD", "DOWNLOADED"].includes(st);
+  const canStartReview = roleCanReview && (st === "SUBMITTED" || st === "RESUBMITTED");
+  const canComment = reviewable && roleCanReview;
+  const canRequestRevision = roleCanReview && !!st && ["SUBMITTED", "RESUBMITTED", "UNDER_REVIEW"].includes(st);
+  const canApprove = roleCanApprove && reviewable;
+  const canFinalize = roleCanApprove && st === "APPROVED";
+  const canRegenerate = roleCanApprove && st === "READY_FOR_DOWNLOAD";
+  const canArchive = roleCanApprove && !!st && ["APPROVED", "READY_FOR_DOWNLOAD", "DOWNLOADED"].includes(st);
   const hasRating = !!detail?.rating;
+  // Statuses in which the MDRRMO Officer's approve / finalize / archive controls would normally appear —
+  // used to explain their absence to MDRRMO Staff.
+  const officerActionStatus =
+    !!st &&
+    ["SUBMITTED", "RESUBMITTED", "UNDER_REVIEW", "NEEDS_REVISION", "APPROVED", "READY_FOR_DOWNLOAD", "DOWNLOADED"].includes(st);
 
   const openFinalize = async () => {
     try {
@@ -286,7 +310,7 @@ export default function MdrrmoReview({
                     <ClipboardList className="h-4 w-4" /> Start Review
                   </Button>
                 )}
-                {st === "UNDER_REVIEW" && (
+                {canComment && st === "UNDER_REVIEW" && (
                   <Button
                     variant="outline"
                     onClick={() => {
@@ -337,6 +361,19 @@ export default function MdrrmoReview({
                   <Button variant="ghost" disabled={busy} onClick={() => setArchiveOpen(true)}>
                     <Archive className="h-4 w-4" /> Archive
                   </Button>
+                )}
+                {/* Role notices — explain which console role performs the actions */}
+                {!roleCanReview && !roleCanApprove && (
+                  <span className="inline-flex items-center gap-1.5 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                    <Info className="h-3.5 w-3.5 shrink-0" />
+                    Read-only — reviews are performed by the MDRRMO Officer and Staff.
+                  </span>
+                )}
+                {roleCanReview && !roleCanApprove && officerActionStatus && (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Info className="h-3.5 w-3.5 shrink-0" />
+                    Approval requires the MDRRMO Officer.
+                  </span>
                 )}
               </div>
             </div>
@@ -393,7 +430,7 @@ export default function MdrrmoReview({
                 onDraftChange={(v) => setDrafts((d) => ({ ...d, [section.key]: v }))}
                 onAddPending={() => addPending(section.key)}
                 onRemovePending={(pid) => setPending((p) => p.filter((x) => x.id !== pid))}
-                reviewable={reviewable}
+                canComment={canComment}
                 busy={busy}
               />
             ))}
@@ -423,6 +460,7 @@ export default function MdrrmoReview({
                     min={0}
                     max={c.maxScore}
                     inputMode="numeric"
+                    disabled={!roleCanReview}
                     className="w-20 text-right tabular-nums"
                     value={scores[c.key] ?? ""}
                     onChange={(e) => {
@@ -449,45 +487,57 @@ export default function MdrrmoReview({
                 <Label htmlFor="eval-remarks" className="text-sm font-normal">
                   Remarks
                 </Label>
-                <Textarea id="eval-remarks" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Overall observations, strengths, recommendations..." />
+                <Textarea
+                  id="eval-remarks"
+                  rows={3}
+                  value={remarks}
+                  disabled={!roleCanReview}
+                  onChange={(e) => setRemarks(e.target.value)}
+                  placeholder="Overall observations, strengths, recommendations..."
+                />
               </div>
               <p className="text-xs text-muted-foreground">
                 Score guide: {detail.criteria[0]?.maxScore ?? 25} = Excellent, 0 = Missing
               </p>
+              {!roleCanReview && (
+                <p className="text-xs text-muted-foreground">Read-only — evaluations are saved by the MDRRMO Officer and Staff.</p>
+              )}
               {detail.rating && (
                 <p className="text-xs text-muted-foreground">
                   Last saved: {detail.rating.total}/{detail.rating.maxTotal}
                   {detail.rating.ratedByName ? ` by ${detail.rating.ratedByName}` : ""} on {formatDateTime(detail.rating.createdAt)}
                 </p>
               )}
-              <div>
-                <Button
-                  disabled={
-                    busy ||
-                    detail.criteria.length === 0 ||
-                    !detail.criteria.every((c) => scores[c.key] !== undefined && scores[c.key] >= 0 && scores[c.key] <= c.maxScore)
-                  }
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await api.adminRating(id, scores, remarks);
-                      toast({ title: "Evaluation saved" });
-                      reload();
-                      onChanged?.();
-                    } catch (e) {
-                      toast({
-                        title: "Could not save evaluation",
-                        description: e instanceof Error ? e.message : "Please try again.",
-                        variant: "destructive",
-                      });
-                    } finally {
-                      setBusy(false);
+              {roleCanReview && (
+                <div>
+                  <Button
+                    disabled={
+                      busy ||
+                      detail.criteria.length === 0 ||
+                      !detail.criteria.every((c) => scores[c.key] !== undefined && scores[c.key] >= 0 && scores[c.key] <= c.maxScore)
                     }
-                  }}
-                >
-                  Save Evaluation
-                </Button>
-              </div>
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await api.adminRating(id, scores, remarks);
+                        toast({ title: "Evaluation saved" });
+                        reload();
+                        onChanged?.();
+                      } catch (e) {
+                        toast({
+                          title: "Could not save evaluation",
+                          description: e instanceof Error ? e.message : "Please try again.",
+                          variant: "destructive",
+                        });
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Save Evaluation
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -554,8 +604,8 @@ export default function MdrrmoReview({
         </TabsContent>
       </Tabs>
 
-      {/* Sticky action bar for reviewable statuses */}
-      {reviewable && (
+      {/* Sticky action bar for reviewable statuses (MDRRMO Officer + Staff) */}
+      {canComment && (
         <div className="sticky bottom-4 z-30">
           <Card className="border-primary/40 shadow-lg">
             <CardContent className="flex flex-wrap items-center gap-2 py-3">
@@ -604,6 +654,12 @@ export default function MdrrmoReview({
                       </Button>
                     </HintButton>
                   ))}
+                {roleCanReview && !roleCanApprove && (
+                  <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Info className="h-3.5 w-3.5" />
+                    Approval requires the MDRRMO Officer
+                  </span>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -902,7 +958,7 @@ function SectionAccordion({
   onDraftChange,
   onAddPending,
   onRemovePending,
-  reviewable,
+  canComment,
   busy,
 }: {
   index: number;
@@ -916,7 +972,7 @@ function SectionAccordion({
   onDraftChange: (v: string) => void;
   onAddPending: () => void;
   onRemovePending: (pendingId: number) => void;
-  reviewable: boolean;
+  canComment: boolean;
   busy: boolean;
 }) {
   const complete = !!section.complete;
@@ -1046,7 +1102,7 @@ function SectionAccordion({
         )}
 
         {/* Comment box */}
-        {reviewable && (
+        {canComment && (
           <div className="space-y-2 rounded-lg border border-dashed bg-muted/30 p-3">
             <Label htmlFor={`comment-${section.key}`} className="text-xs font-medium text-muted-foreground">
               Add MDRRMO comment to this section

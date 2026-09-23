@@ -36,9 +36,17 @@ async function makePlaceholderPdf(title: string, subtitle: string): Promise<Buff
   return Buffer.from(bytes);
 }
 
-function fullValues(brgy: { name: string; captain: string }, i: number): Record<string, unknown> {
+function fullValues(
+  brgy: { name: string; captain: string },
+  i: number,
+  council?: CouncilMember[]
+): Record<string, unknown> {
   const pop = 1400 + ((i * 137) % 1800);
   const hh = Math.round(pop / 4.6);
+  const vice = council?.find((o) => o.position === "KAGAWAD");
+  const sk = council?.find((o) => o.position === "SK_CHAIRPERSON");
+  const sec = council?.find((o) => o.position === "SECRETARY");
+  const treas = council?.find((o) => o.position === "TREASURER");
   return {
     barangay_captain: brgy.captain,
     contact_number: `0917 555 0${String(10 + i).padStart(2, "0")}`,
@@ -84,11 +92,12 @@ function fullValues(brgy: { name: string; captain: string }, i: number): Record<
     risk_summary:
       "The barangay is highly exposed to typhoon and flooding due to its river system and low-lying puroks. Landslide risk is moderate in upland puroks. Capacity is improving but equipment gaps remain.",
     bdrrmc_chair: brgy.captain,
-    bdrrmc_vice: "Kagawad Rogelio P. Mendoza",
+    bdrrmc_vice: vice ? `Kagawad ${vice.name}` : "Kagawad Rogelio P. Mendoza",
     response_team_lead: "Brgy. Tanod Chief Danilo C. Farinas",
     bdrrmc_meeting_freq: "Monthly / Buwanan",
-    bdrrmc_members:
-      `${brgy.captain} — Chairperson\nKagawad Rogelio P. Mendoza — Vice Chairperson\nSK Chairperson — Youth representative\nBarangay Secretary — Secretariat\nBarangay Treasurer — Finance\nBrgy. Tanod Chief — Response Team\nBHW — Health and Nutrition\nPTA President — Education\nCVO President — Livelihood`,
+    bdrrmc_members: council
+      ? `${brgy.captain} — Chairperson\nKagawad ${vice?.name ?? ""} — Vice Chairperson (${vice?.committee ?? "Committee"})\n${sk?.name ?? "SK Chairperson"} — SK Chairperson (Youth Affairs)\n${sec?.name ?? "Barangay Secretary"} — Secretary (Secretariat)\n${treas?.name ?? "Barangay Treasurer"} — Treasurer (Finance)\nBrgy. Tanod Chief — Response Team\nBHW — Health and Nutrition\nPTA President — Education\nCVO President — Livelihood`
+      : `${brgy.captain} — Chairperson\nKagawad Rogelio P. Mendoza — Vice Chairperson\nSK Chairperson — Youth representative\nBarangay Secretary — Secretariat\nBarangay Treasurer — Finance\nBrgy. Tanod Chief — Response Team\nBHW — Health and Nutrition\nPTA President — Education\nCVO President — Livelihood`,
     prevention_activities:
       "Quarterly drainage canal cleaning (all puroks); riverbank planting of bamboos and mangroves; zoning enforcement along danger zones; IEC campaigns on waste management to prevent clogged drainage",
     prevention_budget: 20000,
@@ -143,6 +152,92 @@ function draftValues(brgy: { name: string; captain: string }, i: number): Record
   };
 }
 
+// ---- Barangay council (Sangguniang Barangay) data ----
+// NOTE: The official list PDF (official-list_05_2026-09-24.pdf) was not found on
+// the server, so council member names below are realistic placeholders. They can
+// be corrected at any time via Database Management (System Administrator).
+// Punong Barangay names are carried over from the barangay list.
+const MALE_NAMES = [
+  "Alfredo", "Andres", "Antonio", "Arnel", "Arturo", "Bienvenido", "Bonifacio", "Cesar",
+  "Cristino", "Danilo", "Dionisio", "Edgardo", "Elpidio", "Emmanuel", "Ernesto", "Federico",
+  "Fernando", "Francisco", "Gilbert", "Gregorio", "Herbert", "Jhonar", "Joel", "Jorge",
+  "Jose", "Joven", "Leandro", "Lorenzo", "Marlon", "Melchor", "Nestor", "Orlando",
+  "Oscar", "Rafael", "Ramon", "Renato", "Rey", "Ricardo", "Robert", "Rogelio",
+  "Rolando", "Rommel", "Ronnie", "Rufino", "Salvador", "Teodoro", "Vicente", "Wenceslao",
+];
+const FEMALE_NAMES = [
+  "Aleli", "Alicia", "Amelia", "Anastacia", "Angelita", "Antonietta", "Aurora", "Carmelita",
+  "Cecilia", "Charito", "Cristina", "Dahlia", "Dominga", "Editha", "Elvira", "Esperanza",
+  "Estrella", "Evangeline", "Felicitas", "Geraldine", "Gloria", "Herminia", "Imelda", "Jocelyn",
+  "Jocasta", "Josefina", "Ligaya", "Loida", "Lourdes", "Ma. Theresa", "Maricel", "Marilou",
+  "Marites", "Melinda", "Merlinda", "Nenita", "Norma", "Paz", "Perlita", "Raquel",
+  "Remedios", "Rosalinda", "Rowena", "Socorro", "Susana", "Teresita", "Wilma",
+];
+const SURNAMES = [
+  "Azada", "Baclao", "Balmes", "Barrameda", "Bascug", "Bataller", "Bermundo", "Bicol",
+  "Borejon", "Borlagdatan", "Bulan", "Bustamante", "Cabrera", "Cardinale", "Carredo", "Celso",
+  "Daep", "Dela Cruz", "Dela Peña", "Dianela", "Espinas", "Fernandez", "Ferraren", "Flores",
+  "Garcia", "Gestiada", "Glorioso", "Gonzaga", "Gonzales", "Grageda", "Guerrero", "Gutierrez",
+  "Ibarra", "Ilagan", "Jamilano", "Jimenez", "Lansangan", "Llagas", "Llona", "Lorzano",
+  "Madrideo", "Mancilla", "Marcaida", "Mendoza", "Mintu", "Mirandilla", "Molina", "Monzales",
+  "Morales", "Nava", "Navarro", "Ocampo", "Olalia", "Olivan", "Ondiano", "Ortega",
+  "Osorio", "Pascua", "Peligro", "Perez", "Piamonte", "Pura", "Ranara", "Rances",
+  "Rañola", "Reyes", "Rosales", "Salazar", "Salceda", "Salvador", "Samlao", "Santos",
+  "Sarinas", "Solano", "Solmirano", "Soria", "Tapel", "Tenedero", "Tible", "Tolentino",
+  "Toribio", "Trillanes", "Tuazon", "Valdez", "Vargas", "Velasco", "Vergara", "Vicaldo",
+  "Villamor", "Villanueva", "Ybañez", "Zantua", "Ziga",
+];
+const COMMITTEES = [
+  "Peace & Order / Kapayapaan at Kaayusan",
+  "Health & Sanitation / Kalusugan at Sanitasyon",
+  "Education & Culture / Edukasyon at Kultura",
+  "Infrastructure & Public Works / Imprastruktura",
+  "Environment / Pangangalaga sa Kapaligiran",
+  "Livelihood & Cooperatives / Kabuhayan",
+  "Youth & Sports / Kabataan at Isports",
+];
+const INITIALS = ["A.", "B.", "C.", "D.", "E.", "F.", "G.", "H.", "J.", "L.", "M.", "N.", "P.", "R.", "S.", "T.", "V."];
+
+interface CouncilMember {
+  name: string;
+  position: string;
+  committee: string | null;
+  order: number;
+}
+
+// Deterministic, realistic placeholder council for barangay index i
+function councilFor(i: number, captain: string): CouncilMember[] {
+  const used = new Set<string>([captain]);
+  const make = (isFemale: boolean, seed: number): string => {
+    const given = isFemale ? FEMALE_NAMES : MALE_NAMES;
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const g = given[(seed * 7 + attempt * 11 + i) % given.length];
+      const s = SURNAMES[(seed * 13 + attempt * 17 + i * 3) % SURNAMES.length];
+      const m = INITIALS[(seed + attempt * 5 + i) % INITIALS.length];
+      const name = `${g} ${m} ${s}`;
+      if (!used.has(name)) {
+        used.add(name);
+        return name;
+      }
+    }
+    return `${isFemale ? FEMALE_NAMES[0] : MALE_NAMES[0]} Z. ${SURNAMES[seed % SURNAMES.length]}`;
+  };
+  return [
+    { name: captain, position: "PUNONG_BARANGAY", committee: null, order: 0 },
+    ...COMMITTEES.map(
+      (committee, k): CouncilMember => ({
+        name: make(k % 2 === 1, i * 10 + k), // alternate genders across kagawads
+        position: "KAGAWAD",
+        committee,
+        order: k + 1,
+      })
+    ),
+    { name: make(true, i * 10 + 7), position: "SK_CHAIRPERSON", committee: "Sangguniang Kabataan / Youth Affairs", order: 8 },
+    { name: make(true, i * 10 + 8), position: "SECRETARY", committee: "Secretariat", order: 9 },
+    { name: make(false, i * 10 + 9), position: "TREASURER", committee: "Finance", order: 10 },
+  ];
+}
+
 function draftValues2(brgy: { name: string; captain: string }, i: number): Record<string, unknown> {
   return {
     ...draftValues(brgy, i),
@@ -180,6 +275,7 @@ async function main() {
   await db.auditLog.deleteMany();
   await db.session.deleteMany();
   await db.barangayCredential.deleteMany();
+  await db.barangayOfficial.deleteMany();
   await db.barangay.deleteMany();
   await db.adminUser.deleteMany();
   await db.templateSection.deleteMany();
@@ -189,14 +285,16 @@ async function main() {
   await fs.rm(path.join(STORAGE_ROOT, "uploads"), { recursive: true, force: true }).catch(() => undefined);
   await fs.rm(path.join(STORAGE_ROOT, "generated"), { recursive: true, force: true }).catch(() => undefined);
 
-  // Admin users
+  // Admin users — three console roles:
+  //   MDRRMO Officer (review + approve), MDRRMO Staff (assist review),
+  //   System Administrator (default admin: roles, settings, database)
   const mdrrmo = await db.adminUser.create({
     data: {
       username: "mdrrmo",
       passwordHash: hashSecret("PioDuran2026!"),
-      name: "Jose R. Salazar",
+      name: "Noel F. Ordona",
       position: "Municipal DRRM Officer",
-      role: "MDRRMO_ADMIN",
+      role: "MDRRMO_OFFICER",
       lastLoginAt: daysAgo(0, 8, 30),
     },
   });
@@ -204,14 +302,25 @@ async function main() {
     data: {
       username: "sysadmin",
       passwordHash: hashSecret("SysAdmin2026!"),
-      name: "System Administrator",
-      position: "ICT Administrator",
+      name: "Tho Pogi",
+      position: "ICT Administrator / System Administrator",
       role: "SYSTEM_ADMIN",
     },
   });
+  await db.adminUser.create({
+    data: {
+      username: "staff",
+      passwordHash: hashSecret("Staff2026!"),
+      name: "Jun Carlo Anasco",
+      position: "MDRRMO Staff",
+      role: "MDRRMO_STAFF",
+      lastLoginAt: daysAgo(0, 7, 45),
+    },
+  });
 
-  // Barangays + credentials
+  // Barangays + credentials + councils (Sangguniang Barangay members)
   const barangays: Array<{ id: string; code: string; name: string }> = [];
+  const councils: CouncilMember[][] = [];
   for (let i = 0; i < BARANGAYS_OF_PIO_DURAN.length; i++) {
     const b = BARANGAYS_OF_PIO_DURAN[i];
     const code = `PD-BRG-${String(i + 1).padStart(3, "0")}`;
@@ -233,7 +342,18 @@ async function main() {
         },
       },
     });
+    const council = councilFor(i, b.captain);
+    await db.barangayOfficial.createMany({
+      data: council.map((o) => ({
+        barangayId: created.id,
+        name: o.name,
+        position: o.position,
+        committee: o.committee,
+        order: o.order,
+      })),
+    });
     barangays.push({ id: created.id, code, name: created.name });
+    councils.push(council);
   }
 
   // Template sections
@@ -277,7 +397,7 @@ async function main() {
   // Settings
   const settingsMap: Record<string, string> = {
     planYear: JSON.stringify(2026),
-    signatoryName: JSON.stringify("Jose R. Salazar"),
+    signatoryName: JSON.stringify("Noel F. Ordona"),
     signatoryPosition: JSON.stringify("Municipal Disaster Risk Reduction and Management Officer"),
     municipality: JSON.stringify("Pio Duran"),
     province: JSON.stringify("Albay"),
@@ -368,7 +488,7 @@ async function main() {
   // --- [1] Bacong: SUBMITTED v1 (English), complete
   {
     const sub = await getSubmission(1);
-    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[1], 1);
+    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[1], 1, councils[1]);
     const at = daysAgo(4, 14, 12);
     await db.submission.update({
       where: { id: sub.id },
@@ -383,7 +503,7 @@ async function main() {
   // --- [2] Bagumbayan: UNDER_REVIEW v1
   {
     const sub = await getSubmission(2);
-    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[2], 2);
+    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[2], 2, councils[2]);
     const at = daysAgo(5, 9, 20);
     await db.submission.update({
       where: { id: sub.id },
@@ -399,7 +519,7 @@ async function main() {
   // --- [3] Baliana: NEEDS_REVISION v1 with comments
   {
     const sub = await getSubmission(3);
-    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[3], 3);
+    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[3], 3, councils[3]);
     const at = daysAgo(1, 16, 45);
     await db.submission.update({
       where: { id: sub.id },
@@ -431,7 +551,7 @@ async function main() {
   // --- [5] Buenavista: READY_FOR_DOWNLOAD (v2 approved, rated, signed, PDF generated)
   {
     const sub = await getSubmission(5);
-    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[5], 5);
+    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[5], 5, councils[5]);
     const submittedV1 = daysAgo(9, 10, 0);
     const reviewV1 = daysAgo(8, 13, 30);
     const resubmitted = daysAgo(7, 9, 15);
@@ -497,7 +617,7 @@ async function main() {
   // --- [6] Caratagan: RESUBMITTED v2
   {
     const sub = await getSubmission(6);
-    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[6], 6);
+    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[6], 6, councils[6]);
     const submittedV1 = daysAgo(8, 11, 0);
     const reviewV1 = daysAgo(7, 14, 20);
     const resubmitted = daysAgo(0, 8, 50);
@@ -548,9 +668,11 @@ async function main() {
   await db.notification.create({ data: { audience: "ADMIN", type: "SYSTEM", title: "Welcome to QAS33", body: `BDRRMP ${YEAR} cycle is open. 33 barangays are onboarded and credentials have been issued.`, createdAt: daysAgo(14, 8, 0) } });
 
   const count = await db.barangay.count();
-  console.log(`Seed complete: ${count} barangays, ${await db.submission.count()} submissions, ${await db.auditLog.count()} audit entries.`);
+  console.log(`Seed complete: ${count} barangays, ${await db.barangayOfficial.count()} council officials, ${await db.submission.count()} submissions, ${await db.auditLog.count()} audit entries.`);
   console.log("Barangay login demo: PD-BRG-006 / QAS33-006 (Buenavista — final doc ready)");
-  console.log("Admin login demo: mdrrmo / PioDuran2026!");
+  console.log("MDRRMO Officer: mdrrmo / PioDuran2026! (Noel F. Ordona — review & approve)");
+  console.log("MDRRMO Staff: staff / Staff2026! (Jun Carlo Anasco — assists review)");
+  console.log("System Admin (default): sysadmin / SysAdmin2026! (Tho Pogi — roles, settings, database)");
 }
 
 main()

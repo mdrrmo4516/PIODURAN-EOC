@@ -155,7 +155,7 @@ export default function BarangayWizard({
   const activeIndex = sections.findIndex((s) => s.key === activeKey);
   const activeSection = activeIndex >= 0 ? sections[activeIndex] : undefined;
 
-  // focus jump (from dashboard / requirements)
+  // focus jump (from dashboard / references)
   useEffect(() => {
     if (focusSectionKey) {
       setActiveKey(focusSectionKey);

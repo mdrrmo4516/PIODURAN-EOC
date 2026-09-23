@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveSession } from "@/lib/qas33/auth";
+import { resolveSession, normalizeAdminRole } from "@/lib/qas33/auth";
 
 export async function GET() {
   const resolved = await resolveSession();
@@ -19,7 +19,15 @@ export async function GET() {
             households: resolved.barangay.households,
           }
         : undefined,
-      admin: resolved.admin ?? undefined,
+      admin: resolved.admin
+        ? {
+            id: resolved.admin.id,
+            username: resolved.admin.username,
+            name: resolved.admin.name,
+            position: resolved.admin.position,
+            role: normalizeAdminRole(resolved.admin.role),
+          }
+        : undefined,
       mustChangePin: resolved.credential?.mustChangePin ?? false,
       expiresAt: resolved.session.expiresAt.toISOString(),
     },

@@ -1,13 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requireAdmin, getClientIp } from "@/lib/qas33/auth";
+import { requireAdmin, canReviewBdrrmp, normalizeAdminRole, getClientIp } from "@/lib/qas33/auth";
 import { logAudit } from "@/lib/qas33/audit";
 
 // POST — save/update MDRRMO evaluation for a submission
+// (MDRRMO Officer + MDRRMO Staff can rate; the System Administrator is read-only)
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const resolved = await requireAdmin();
   if (!resolved || !resolved.admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canReviewBdrrmp(resolved.admin.role)) {
+    return NextResponse.json(
+      { error: "Only the MDRRMO Officer and MDRRMO Staff can save evaluations." },
+      { status: 403 }
+    );
   }
   const { id } = await ctx.params;
   const submission = await db.submission.findUnique({ where: { id }, include: { barangay: true } });

@@ -4,7 +4,7 @@ import type { SettingValues } from "./types";
 
 const DEFAULT_SETTINGS: SettingValues = {
   planYear: 2026,
-  signatoryName: "Jose R. Salazar",
+  signatoryName: "Noel F. Ordona",
   signatoryPosition: "Municipal Disaster Risk Reduction and Management Officer",
   municipality: "Pio Duran",
   province: "Albay",
@@ -27,7 +27,14 @@ export async function getSettings(): Promise<SettingValues> {
 
 export async function saveSettings(values: Partial<SettingValues>) {
   const current = await getSettings();
-  const merged = { ...current, ...values };
+  // Only overwrite keys that were actually provided (skip undefined/null/empty)
+  const merged: Record<keyof SettingValues, string | number> = { ...current };
+  for (const key of Object.keys(values) as Array<keyof SettingValues>) {
+    const v = values[key];
+    if (v !== undefined && v !== null && v !== "") {
+      merged[key] = v;
+    }
+  }
   for (const key of Object.keys(merged) as Array<keyof SettingValues>) {
     const json = JSON.stringify(merged[key]);
     await db.systemSetting.upsert({
@@ -36,7 +43,7 @@ export async function saveSettings(values: Partial<SettingValues>) {
       update: { value: json },
     });
   }
-  return merged;
+  return merged as SettingValues;
 }
 
 export function buildDocId(barangayCode: string, year: number, version: number): string {

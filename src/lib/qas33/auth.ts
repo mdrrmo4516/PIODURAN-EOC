@@ -43,6 +43,31 @@ export interface SessionPayload {
   userAgent?: string;
 }
 
+// ---- Admin roles & permissions ----
+// SYSTEM_ADMIN   — Tho Pogi (default admin): roles, settings, references/tutorials config, database CRUD
+// MDRRMO_OFFICER — Noel F. Ordona: reviews AND approves BDRRMP (signs/finalizes)
+// MDRRMO_STAFF   — Jun Carlo Anasco: assists review (comments/revision/rating), no approval
+export type AdminRole = "SYSTEM_ADMIN" | "MDRRMO_OFFICER" | "MDRRMO_STAFF";
+
+export function normalizeAdminRole(role: string): AdminRole {
+  if (role === "SYSTEM_ADMIN") return "SYSTEM_ADMIN";
+  if (role === "MDRRMO_STAFF") return "MDRRMO_STAFF";
+  return "MDRRMO_OFFICER"; // includes legacy MDRRMO_ADMIN
+}
+
+export function isSystemAdmin(role: string): boolean {
+  return normalizeAdminRole(role) === "SYSTEM_ADMIN";
+}
+
+export function canReviewBdrrmp(role: string): boolean {
+  const r = normalizeAdminRole(role);
+  return r === "MDRRMO_OFFICER" || r === "MDRRMO_STAFF";
+}
+
+export function canApproveBdrrmp(role: string): boolean {
+  return normalizeAdminRole(role) === "MDRRMO_OFFICER";
+}
+
 export async function createSession(payload: SessionPayload): Promise<string> {
   const token = randomBytes(32).toString("hex");
   const hours = payload.role === "ADMIN" ? ADMIN_SESSION_HOURS : BARANGAY_SESSION_HOURS;
@@ -76,7 +101,7 @@ export interface ResolvedSession {
     households: number | null;
   } | null;
   credential: { id: string; mustChangePin: boolean; active: boolean } | null;
-  admin: { id: string; name: string; position: string | null; role: string } | null;
+  admin: { id: string; username: string; name: string; position: string | null; role: string } | null;
 }
 
 export async function resolveSession(): Promise<ResolvedSession | null> {
@@ -114,7 +139,7 @@ export async function resolveSession(): Promise<ResolvedSession | null> {
     session: { id: session.id, token: session.token, role: session.role, expiresAt: session.expiresAt },
     barangay: null,
     credential: null,
-    admin: { id: admin.id, name: admin.name, position: admin.position, role: admin.role },
+    admin: { id: admin.id, username: admin.username, name: admin.name, position: admin.position, role: admin.role },
   };
 }
 
@@ -127,6 +152,14 @@ export async function requireBarangay(): Promise<ResolvedSession | null> {
 export async function requireAdmin(): Promise<ResolvedSession | null> {
   const resolved = await resolveSession();
   if (!resolved || resolved.session.role !== "ADMIN" || !resolved.admin) return null;
+  return resolved;
+}
+
+// Require a specific admin role (e.g. SYSTEM_ADMIN for configuration / database management)
+export async function requireAdminRole(roles: AdminRole[]): Promise<ResolvedSession | null> {
+  const resolved = await requireAdmin();
+  if (!resolved || !resolved.admin) return null;
+  if (!roles.includes(normalizeAdminRole(resolved.admin.role))) return null;
   return resolved;
 }
 

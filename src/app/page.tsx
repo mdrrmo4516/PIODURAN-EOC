@@ -9,7 +9,7 @@ import Landing from "@/components/qas33/landing";
 import BarangayApp from "@/components/qas33/barangay-app";
 import MdrrmoApp from "@/components/qas33/mdrrmo-app";
 import { api } from "@/lib/qas33/api";
-import type { SessionInfo } from "@/lib/qas33/types";
+import { ADMIN_ROLE_META, normalizeAdminRole, type SessionInfo } from "@/lib/qas33/types";
 
 export default function Home() {
   const [session, setSession] = useState<SessionInfo | null>(null);
@@ -104,7 +104,7 @@ export default function Home() {
           You are signed in as{" "}
           <strong>
             {session.role === "ADMIN"
-              ? `${session.admin?.name ?? "MDRRMO"} (MDRRMO)`
+              ? `${session.admin?.name ?? "MDRRMO"} (${ADMIN_ROLE_META[normalizeAdminRole(session.admin?.role)].label})`
               : `Barangay ${session.barangay?.name ?? ""}`}
           </strong>
           .{" "}

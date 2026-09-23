@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requireAdmin, getClientIp } from "@/lib/qas33/auth";
+import { requireAdmin, canReviewBdrrmp, canApproveBdrrmp, normalizeAdminRole, getClientIp } from "@/lib/qas33/auth";
 import { logAudit, notifyBarangay } from "@/lib/qas33/audit";
 
 interface CommentInput {
@@ -18,6 +18,26 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
   const { id } = await ctx.params;
   const body = await request.json().catch(() => ({}));
   const action = String(body.action || "");
+
+  // ---- Role policy (QAS33) ----
+  // MDRRMO Officer (Noel F. Ordona): full review workflow incl. APPROVE
+  // MDRRMO Staff (Jun Carlo Anasco): assists — start review, comments, revision requests
+  // System Administrator: read-only oversight of the review process
+  const role = normalizeAdminRole(resolved.admin.role);
+  const reviewer = canReviewBdrrmp(role); // start | comment | revision
+  const approver = canApproveBdrrmp(role); // approve | archive
+  if (["start", "comment", "revision", "approve", "archive"].includes(action) && !reviewer && !approver) {
+    return NextResponse.json(
+      { error: "The System Administrator has read-only access to the review process. Reviews are performed by the MDRRMO Officer and Staff." },
+      { status: 403 }
+    );
+  }
+  if (["approve", "archive"].includes(action) && !approver) {
+    return NextResponse.json(
+      { error: "Only the MDRRMO Officer can approve and archive BDRRMP submissions." },
+      { status: 403 }
+    );
+  }
 
   const submission = await db.submission.findUnique({ where: { id }, include: { barangay: true } });
   if (!submission) return NextResponse.json({ error: "Submission not found" }, { status: 404 });

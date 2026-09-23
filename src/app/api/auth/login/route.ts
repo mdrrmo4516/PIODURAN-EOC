@@ -8,6 +8,7 @@ import {
   MAX_FAILED_ATTEMPTS,
   LOCKOUT_MINUTES,
   getClientIp,
+  normalizeAdminRole,
 } from "@/lib/qas33/auth";
 import { logAudit } from "@/lib/qas33/audit";
 
@@ -120,12 +121,12 @@ export async function POST(request: NextRequest) {
         actorType: "ADMIN",
         actorName: admin.name,
         action: "LOGGED_IN",
-        detail: `MDRRMO admin logged in from ${ip}`,
+        detail: `Console login (${normalizeAdminRole(admin.role)}) from ${ip}`,
         ip,
       });
       const res = NextResponse.json({
         role: "ADMIN",
-        admin: { id: admin.id, name: admin.name, position: admin.position, role: admin.role },
+        admin: { id: admin.id, name: admin.name, position: admin.position, role: normalizeAdminRole(admin.role) },
       });
       res.cookies.set(SESSION_COOKIE, token, {
         ...SESSION_COOKIE_OPTIONS,

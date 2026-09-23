@@ -8,7 +8,7 @@ import {
   localizeSection,
   toFileMeta,
 } from "./template";
-import type { BarangayOverview, CommentItem } from "./types";
+import type { BarangayOverview, CommentItem, OfficialItem } from "./types";
 import type { Submission, Barangay, SubmissionFile, Review, ReviewComment, AdminUser } from "@prisma/client";
 
 export async function getOrCreateSubmission(barangayId: string): Promise<Submission> {
@@ -69,6 +69,16 @@ export async function buildOverview(
   const progressList = computeSectionProgress(sections, values, fileMetas, lang);
   const validation = computeValidation(sections, values, fileMetas, lang);
   const comments = await getCommentsForBarangay(submission.id);
+  const officialsRaw = await db.barangayOfficial.findMany({
+    where: { barangayId: barangay.id, active: true },
+    orderBy: { order: "asc" },
+  });
+  const officials: OfficialItem[] = officialsRaw.map((o) => ({
+    id: o.id,
+    name: o.name,
+    position: o.position,
+    committee: o.committee,
+  }));
   const doc = await db.generatedDocument.findFirst({
     where: { submissionId: submission.id },
     orderBy: { generatedAt: "desc" },
@@ -91,6 +101,7 @@ export async function buildOverview(
       population: barangay.population,
       households: barangay.households,
     },
+    officials,
     submission: {
       id: submission.id,
       year: submission.year,

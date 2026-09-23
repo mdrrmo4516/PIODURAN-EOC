@@ -2,6 +2,52 @@
 
 export type Role = "BARANGAY" | "ADMIN";
 
+// ---- Console (admin) roles ----
+// SYSTEM_ADMIN   — the only role that can edit roles, configure all settings and CRUD the database
+// MDRRMO_OFFICER — reviews and approves the BDRRMP (signs/finalizes)
+// MDRRMO_STAFF   — assists the review process (comments, revision requests, evaluations)
+export type AdminRole = "SYSTEM_ADMIN" | "MDRRMO_OFFICER" | "MDRRMO_STAFF";
+
+export const ADMIN_ROLE_META: Record<AdminRole, { label: string; short: string; badge: string; description: string }> = {
+  SYSTEM_ADMIN: {
+    label: "System Administrator",
+    short: "SysAdmin",
+    badge: "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300",
+    description: "Manages user roles, configures all settings and has full database access.",
+  },
+  MDRRMO_OFFICER: {
+    label: "MDRRMO Officer",
+    short: "Officer",
+    badge: "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300",
+    description: "Reviews and approves BDRRMP submissions — signs the final document.",
+  },
+  MDRRMO_STAFF: {
+    label: "MDRRMO Staff",
+    short: "Staff",
+    badge: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300",
+    description: "Assists the review process — comments, revision requests and evaluations.",
+  },
+};
+
+export function normalizeAdminRole(role: string | null | undefined): AdminRole {
+  if (role === "SYSTEM_ADMIN") return "SYSTEM_ADMIN";
+  if (role === "MDRRMO_STAFF") return "MDRRMO_STAFF";
+  return "MDRRMO_OFFICER"; // includes legacy MDRRMO_ADMIN
+}
+
+export function isSystemAdmin(role: string | null | undefined): boolean {
+  return normalizeAdminRole(role) === "SYSTEM_ADMIN";
+}
+
+export function canReviewBdrrmp(role: string | null | undefined): boolean {
+  const r = normalizeAdminRole(role);
+  return r === "MDRRMO_OFFICER" || r === "MDRRMO_STAFF";
+}
+
+export function canApproveBdrrmp(role: string | null | undefined): boolean {
+  return normalizeAdminRole(role) === "MDRRMO_OFFICER";
+}
+
 export interface SessionInfo {
   role: Role;
   barangay?: {
@@ -12,6 +58,7 @@ export interface SessionInfo {
   };
   admin?: {
     id: string;
+    username?: string;
     name: string;
     position?: string | null;
     role: string;
@@ -176,6 +223,21 @@ export interface DocumentInfo {
   downloadCount: number;
 }
 
+export interface OfficialItem {
+  id: string;
+  name: string;
+  position: string;
+  committee?: string | null;
+}
+
+export const OFFICIAL_POSITION_META: Record<string, { label: string; order: number }> = {
+  PUNONG_BARANGAY: { label: "Punong Barangay", order: 1 },
+  KAGAWAD: { label: "Kagawad", order: 2 },
+  SK_CHAIRPERSON: { label: "SK Chairperson", order: 3 },
+  SECRETARY: { label: "Barangay Secretary", order: 4 },
+  TREASURER: { label: "Barangay Treasurer", order: 5 },
+};
+
 export interface BarangayOverview {
   barangay: {
     id: string;
@@ -185,6 +247,7 @@ export interface BarangayOverview {
     population?: number | null;
     households?: number | null;
   };
+  officials: OfficialItem[];
   submission: {
     id: string;
     year: number;
@@ -240,6 +303,7 @@ export interface AdminBarangayRow {
   name: string;
   captain?: string | null;
   active: boolean;
+  officials: OfficialItem[];
   credential: {
     active: boolean;
     mustChangePin: boolean;

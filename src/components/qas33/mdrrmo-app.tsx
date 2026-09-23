@@ -8,6 +8,7 @@ import {
   BookOpen,
   Building2,
   ClipboardList,
+  Database,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -17,10 +18,16 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/qas33/api";
-import type { SessionInfo } from "@/lib/qas33/types";
+import {
+  ADMIN_ROLE_META,
+  isSystemAdmin,
+  normalizeAdminRole,
+  type SessionInfo,
+} from "@/lib/qas33/types";
 import { cn } from "@/lib/utils";
 import MdrrmoAudit from "./mdrrmo-audit";
 import MdrrmoBarangays from "./mdrrmo-barangays";
+import MdrrmoDatabase from "./mdrrmo-database";
 import MdrrmoDashboard from "./mdrrmo-dashboard";
 import MdrrmoNotifications from "./mdrrmo-notifications";
 import MdrrmoQueue from "./mdrrmo-queue";
@@ -40,18 +47,23 @@ type ViewKey =
   | "reports"
   | "notifications"
   | "users"
+  | "database"
   | "audit"
   | "settings";
+
+// Console areas restricted to the System Administrator role
+const SYSADMIN_ONLY_KEYS: ReadonlySet<ViewKey> = new Set(["users", "settings", "database"]);
 
 const NAV: { key: ViewKey; label: string; icon: typeof Bell }[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "barangays", label: "Barangays", icon: Building2 },
   { key: "queue", label: "Review Queue", icon: ClipboardList },
-  { key: "requirements", label: "Requirements", icon: ListChecks },
+  { key: "requirements", label: "References", icon: ListChecks },
   { key: "tutorials", label: "Tutorials", icon: BookOpen },
   { key: "reports", label: "Reports", icon: BarChart3 },
   { key: "notifications", label: "Notifications", icon: Bell },
   { key: "users", label: "Users", icon: Users },
+  { key: "database", label: "Database", icon: Database },
   { key: "audit", label: "Audit Logs", icon: ScrollText },
   { key: "settings", label: "Settings", icon: Settings2 },
 ];
@@ -62,6 +74,11 @@ export default function MdrrmoApp({ session, onLogout }: { session: SessionInfo;
   const [unread, setUnread] = useState(0);
   const [unreadTick, setUnreadTick] = useState(0);
   const [dataVersion, setDataVersion] = useState(0);
+
+  // Role-based navigation: Users / Settings / Database are System Administrator only
+  const adminRole = normalizeAdminRole(session.admin?.role);
+  const sysAdmin = isSystemAdmin(adminRole);
+  const navItems = sysAdmin ? NAV : NAV.filter((item) => !SYSADMIN_ONLY_KEYS.has(item.key));
 
   useEffect(() => {
     let alive = true;
@@ -116,8 +133,25 @@ export default function MdrrmoApp({ session, onLogout }: { session: SessionInfo;
           <div className="ml-auto flex items-center gap-1.5">
             <div className="hidden text-right leading-tight sm:block">
               <div className="text-xs font-semibold">{session.admin?.name}</div>
-              <div className="text-[11px] text-muted-foreground">{session.admin?.position ?? session.admin?.role}</div>
+              <div className="mt-0.5">
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full border px-1.5 py-px text-[10px] font-semibold",
+                    ADMIN_ROLE_META[adminRole].badge
+                  )}
+                >
+                  {ADMIN_ROLE_META[adminRole].label}
+                </span>
+              </div>
             </div>
+            <span
+              className={cn(
+                "mr-1 inline-flex items-center rounded-full border px-1.5 py-px text-[10px] font-semibold sm:hidden",
+                ADMIN_ROLE_META[adminRole].badge
+              )}
+            >
+              {ADMIN_ROLE_META[adminRole].short}
+            </span>
             <Button
               size="icon"
               variant="ghost"
@@ -140,7 +174,7 @@ export default function MdrrmoApp({ session, onLogout }: { session: SessionInfo;
         {/* Mobile navigation (top scrollable tabs) */}
         <nav className="border-t lg:hidden" aria-label="Main navigation">
           <div className="flex gap-1 overflow-x-auto px-2 py-1.5">
-            {NAV.map((item) => {
+            {navItems.map((item) => {
               const Icon = item.icon;
               const active = activeView === item.key;
               return (
@@ -168,11 +202,11 @@ export default function MdrrmoApp({ session, onLogout }: { session: SessionInfo;
         </nav>
       </header>
 
-      <div className="mx-auto flex w-full max-w-[1600px] flex-1">
+      <div className="flex w-full flex-1">
         {/* Desktop sidebar */}
         <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 border-r bg-background lg:block">
           <nav className="flex h-full flex-col gap-0.5 p-3" aria-label="Main navigation">
-            {NAV.map((item) => {
+            {navItems.map((item) => {
               const Icon = item.icon;
               const active = activeView === item.key;
               return (
@@ -212,7 +246,7 @@ export default function MdrrmoApp({ session, onLogout }: { session: SessionInfo;
         {/* Main content */}
         <main className="min-w-0 flex-1 p-4 md:p-6">
           {detailId ? (
-            <MdrrmoReview key={detailId} id={detailId} onBack={() => setDetailId(null)} onChanged={bumpRefresh} />
+            <MdrrmoReview key={detailId} id={detailId} session={session} onBack={() => setDetailId(null)} onChanged={bumpRefresh} />
           ) : view === "dashboard" ? (
             <MdrrmoDashboard refreshKey={dataVersion} />
           ) : view === "barangays" ? (
@@ -220,15 +254,17 @@ export default function MdrrmoApp({ session, onLogout }: { session: SessionInfo;
           ) : view === "queue" ? (
             <MdrrmoQueue onOpen={openDetail} refreshKey={dataVersion} />
           ) : view === "requirements" ? (
-            <MdrrmoRequirements />
+            <MdrrmoRequirements session={session} />
           ) : view === "tutorials" ? (
-            <MdrrmoTutorials />
+            <MdrrmoTutorials session={session} />
           ) : view === "reports" ? (
             <MdrrmoReports />
           ) : view === "notifications" ? (
             <MdrrmoNotifications onRead={refreshUnread} />
           ) : view === "users" ? (
             <MdrrmoUsers session={session} />
+          ) : view === "database" ? (
+            <MdrrmoDatabase />
           ) : view === "audit" ? (
             <MdrrmoAudit />
           ) : (

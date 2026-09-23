@@ -164,7 +164,7 @@ export function PreCheckPanel({
             <h2 className="text-lg font-semibold">{t("Pre-Submission Check", "Pagsusuri Bago Isumite")}</h2>
             <p className="text-sm text-muted-foreground">
               {t(
-                "Make sure every requirement is complete before submitting to the MDRRMO.",
+                "Make sure every reference item is complete before submitting to the MDRRMO.",
                 "Siguraduhing kumpleto ang bawat kailangan bago isumite sa MDRRMO."
               )}
             </p>
@@ -198,7 +198,7 @@ export function PreCheckPanel({
         <Alert className="mt-5 border-primary/40 bg-primary/5 text-primary dark:bg-primary/10">
           <CheckCircle2 />
           <AlertTitle>
-            {t("All requirements complete — READY FOR SUBMISSION", "Kumpleto ang lahat — HANDA NANG ISUMITE")}
+            {t("All references complete — READY FOR SUBMISSION", "Kumpleto ang lahat — HANDA NANG ISUMITE")}
           </AlertTitle>
           <AlertDescription>
             {t(
@@ -251,7 +251,7 @@ export function PreCheckPanel({
         {!validation.ready && (
           <p className="text-xs text-muted-foreground">
             {t(
-              "The submit button unlocks once all requirements are complete.",
+              "The submit button unlocks once all references are complete.",
               "Bubuksan ang pindutan ng pagsusumite kapag kumpleto na ang lahat."
             )}
           </p>

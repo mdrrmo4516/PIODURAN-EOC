@@ -1,0 +1,1105 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→// MDRRMO Console — Review Detail (submission review, evaluation, finalize & sign)
+     4→     4→import { useEffect, useMemo, useState } from "react";
+     5→     5→import type { ReactNode } from "react";
+     6→     6→import {
+     7→     7→  Archive,
+     8→     8→  ArrowLeft,
+     9→     9→  CheckCircle2,
+    10→    10→  AlertTriangle,
+    11→    11→  ClipboardList,
+    12→    12→  Clock,
+    13→    13→  ExternalLink,
+    14→    14→  FileCheck2,
+    15→    15→  FileSignature,
+    16→    16→  History,
+    17→    17→  Loader2,
+    18→    18→  MessageSquare,
+    19→    19→  MessageSquarePlus,
+    20→    20→  Paperclip,
+    21→    21→  Send,
+    22→    22→  Trash2,
+    23→    23→  Undo2,
+    24→    24→  X,
+    25→    25→} from "lucide-react";
+    26→    26→import {
+    27→    27→  Accordion,
+    28→    28→  AccordionContent,
+    29→    29→  AccordionItem,
+    30→    30→  AccordionTrigger,
+    31→    31→} from "@/components/ui/accordion";
+    32→    32→import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+    33→    33→import {
+    34→    34→  AlertDialog,
+    35→    35→  AlertDialogAction,
+    36→    36→  AlertDialogCancel,
+    37→    37→  AlertDialogContent,
+    38→    38→  AlertDialogDescription,
+    39→    39→  AlertDialogFooter,
+    40→    40→  AlertDialogHeader,
+    41→    41→  AlertDialogTitle,
+    42→    42→} from "@/components/ui/alert-dialog";
+    43→    43→import { Button } from "@/components/ui/button";
+    44→    44→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    45→    45→import {
+    46→    46→  Dialog,
+    47→    47→  DialogContent,
+    48→    48→  DialogDescription,
+    49→    49→  DialogFooter,
+    50→    50→  DialogHeader,
+    51→    51→  DialogTitle,
+    52→    52→} from "@/components/ui/dialog";
+    53→    53→import { Input } from "@/components/ui/input";
+    54→    54→import { Label } from "@/components/ui/label";
+    55→    55→import { Progress } from "@/components/ui/progress";
+    56→    56→import { Skeleton } from "@/components/ui/skeleton";
+    57→    57→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    58→    58→import { Textarea } from "@/components/ui/textarea";
+    59→    59→import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+    60→    60→import { useToast } from "@/hooks/use-toast";
+    61→    61→import { api, fieldLabel, formatDate, formatDateTime } from "@/lib/qas33/api";
+    62→    62→import type { AdminSubmissionDetail, ClientSection, CommentItem, FileMeta, TemplateFieldDef } from "@/lib/qas33/types";
+    63→    63→import { cn } from "@/lib/utils";
+    64→    64→import { CopyButton, ErrorAlert, FileStatusBadge, StatusBadge, fileSize, useLoad } from "./mdrrmo-shared";
+    65→    65→
+    66→    66→interface PendingComment {
+    67→    67→  id: number;
+    68→    68→  sectionKey: string;
+    69→    69→  comment: string;
+    70→    70→}
+    71→    71→
+    72→    72→let pendingSeq = 0;
+    73→    73→
+    74→    74→const REVIEW_ACTION_META: Record<string, { label: string; cls: string }> = {
+    75→    75→  START_REVIEW: { label: "Review started", cls: "border-amber-300 bg-amber-50 text-amber-800" },
+    76→    76→  COMMENT: { label: "Comments added", cls: "border-violet-300 bg-violet-50 text-violet-800" },
+    77→    77→  REVISION_REQUESTED: { label: "Revision requested", cls: "border-orange-300 bg-orange-50 text-orange-800" },
+    78→    78→  APPROVED: { label: "Approved", cls: "border-emerald-300 bg-emerald-50 text-emerald-800" },
+    79→    79→  RATED: { label: "Rated", cls: "border-teal-300 bg-teal-50 text-teal-800" },
+    80→    80→  ARCHIVED: { label: "Archived", cls: "border-zinc-300 bg-zinc-100 text-zinc-700" },
+    81→    81→};
+    82→    82→
+    83→    83→function reviewActionBadge(action: string) {
+    84→    84→  const meta = REVIEW_ACTION_META[action] ?? { label: action.replace(/_/g, " "), cls: "border-slate-300 bg-slate-100 text-slate-700" };
+    85→    85→  return <span className={cn("inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold", meta.cls)}>{meta.label}</span>;
+    86→    86→}
+    87→    87→
+    88→    88→export default function MdrrmoReview({
+    89→    89→  id,
+    90→    90→  onBack,
+    91→    91→  onChanged,
+    92→    92→}: {
+    93→    93→  id: string;
+    94→    94→  onBack: () => void;
+    95→    95→  onChanged?: () => void;
+    96→    96→}) {
+    97→    97→  const { toast } = useToast();
+    98→    98→  const { data: detail, loading, error, reload } = useLoad<AdminSubmissionDetail>(() => api.adminSubmission(id), id);
+    99→    99→  const [tab, setTab] = useState("submission");
+   100→   100→  const [drafts, setDrafts] = useState<Record<string, string>>({});
+   101→   101→  const [pending, setPending] = useState<PendingComment[]>([]);
+   102→   102→  const [busy, setBusy] = useState(false);
+   103→   103→
+   104→   104→  // dialog state
+   105→   105→  const [revisionOpen, setRevisionOpen] = useState(false);
+   106→   106→  const [revisionOverall, setRevisionOverall] = useState("");
+   107→   107→  const [approveOpen, setApproveOpen] = useState(false);
+   108→   108→  const [approveOverall, setApproveOverall] = useState("");
+   109→   109→  const [archiveOpen, setArchiveOpen] = useState(false);
+   110→   110→  const [finalizeOpen, setFinalizeOpen] = useState(false);
+   111→   111→  const [finalizeName, setFinalizeName] = useState("");
+   112→   112→  const [finalizePosition, setFinalizePosition] = useState("");
+   113→   113→  const [finalizing, setFinalizing] = useState(false);
+   114→   114→  const [finalizeResult, setFinalizeResult] = useState<Awaited<ReturnType<typeof api.adminFinalize>> | null>(null);
+   115→   115→
+   116→   116→  // evaluation form state
+   117→   117→  const [scores, setScores] = useState<Record<string, number>>({});
+   118→   118→  const [remarks, setRemarks] = useState("");
+   119→   119→
+   120→   120→  const commentsBySection = useMemo(() => {
+   121→   121→    const map = new Map<string, CommentItem[]>();
+   122→   122→    for (const c of detail?.comments ?? []) {
+   123→   123→      const list = map.get(c.sectionKey) ?? [];
+   124→   124→      list.push(c);
+   125→   125→      map.set(c.sectionKey, list);
+   126→   126→    }
+   127→   127→    return map;
+   128→   128→  }, [detail?.comments]);
+   129→   129→  const filesBySection = useMemo(() => {
+   130→   130→    const map = new Map<string, FileMeta[]>();
+   131→   131→    for (const f of detail?.files ?? []) {
+   132→   132→      const list = map.get(f.sectionKey) ?? [];
+   133→   133→      list.push(f);
+   134→   134→      map.set(f.sectionKey, list);
+   135→   135→    }
+   136→   136→    return map;
+   137→   137→  }, [detail?.files]);
+   138→   138→
+   139→   139→  useEffect(() => {
+   140→   140→    if (!detail?.rating) return;
+   141→   141→    const s: Record<string, number> = {};
+   142→   142→    for (const c of detail.rating.scores) s[c.key] = c.score;
+   143→   143→    setScores(s);
+   144→   144→    setRemarks(detail.rating.remarks ?? "");
+   145→   145→  }, [detail]);
+   146→   146→
+   147→   147→  const st = detail?.submission.status;
+   148→   148→  const canStartReview = st === "SUBMITTED" || st === "RESUBMITTED";
+   149→   149→  const reviewable = !!st && ["SUBMITTED", "RESUBMITTED", "UNDER_REVIEW", "NEEDS_REVISION"].includes(st);
+   150→   150→  const canRequestRevision = !!st && ["SUBMITTED", "RESUBMITTED", "UNDER_REVIEW"].includes(st);
+   151→   151→  const canApprove = reviewable;
+   152→   152→  const canFinalize = st === "APPROVED";
+   153→   153→  const canRegenerate = st === "READY_FOR_DOWNLOAD";
+   154→   154→  const canArchive = !!st && ["APPROVED", "READY_FOR_DOWNLOAD", "DOWNLOADED"].includes(st);
+   155→   155→  const hasRating = !!detail?.rating;
+   156→   156→
+   157→   157→  const openFinalize = async () => {
+   158→   158→    try {
+   159→   159→      const res = await api.adminSettings();
+   160→   160→      setFinalizeName(res.settings.signatoryName);
+   161→   161→      setFinalizePosition(res.settings.signatoryPosition);
+   162→   162→    } catch {
+   163→   163→      // fall back to blank inputs
+   164→   164→    }
+   165→   165→    setFinalizeOpen(true);
+   166→   166→  };
+   167→   167→
+   168→   168→  const runReviewAction = async (
+   169→   169→    payload: Record<string, unknown>,
+   170→   170→    successTitle: string,
+   171→   171→    opts?: { clearPending?: boolean; closeDialog?: () => void }
+   172→   172→  ) => {
+   173→   173→    setBusy(true);
+   174→   174→    try {
+   175→   175→      await api.adminReview(id, payload);
+   176→   176→      toast({ title: successTitle });
+   177→   177→      if (opts?.clearPending) {
+   178→   178→        setPending([]);
+   179→   179→        setDrafts({});
+   180→   180→      }
+   181→   181→      opts?.closeDialog?.();
+   182→   182→      reload();
+   183→   183→      onChanged?.();
+   184→   184→    } catch (e) {
+   185→   185→      toast({
+   186→   186→        title: "Action failed",
+   187→   187→        description: e instanceof Error ? e.message : "Please try again.",
+   188→   188→        variant: "destructive",
+   189→   189→      });
+   190→   190→    } finally {
+   191→   191→      setBusy(false);
+   192→   192→    }
+   193→   193→  };
+   194→   194→
+   195→   195→  const doFinalize = async () => {
+   196→   196→    setFinalizing(true);
+   197→   197→    try {
+   198→   198→      const res = await api.adminFinalize(id, finalizeName, finalizePosition);
+   199→   199→      setFinalizeResult(res);
+   200→   200→      setFinalizeOpen(false);
+   201→   201→      reload();
+   202→   202→      onChanged?.();
+   203→   203→    } catch (e) {
+   204→   204→      toast({
+   205→   205→        title: "Finalization failed",
+   206→   206→        description: e instanceof Error ? e.message : "Please try again.",
+   207→   207→        variant: "destructive",
+   208→   208→      });
+   209→   209→    } finally {
+   210→   210→      setFinalizing(false);
+   211→   211→    }
+   212→   212→  };
+   213→   213→
+   214→   214→  const addPending = (sectionKey: string) => {
+   215→   215→    const text = (drafts[sectionKey] ?? "").trim();
+   216→   216→    if (!text) return;
+   217→   217→    setPending((p) => [...p, { id: ++pendingSeq, sectionKey, comment: text }]);
+   218→   218→    setDrafts((d) => ({ ...d, [sectionKey]: "" }));
+   219→   219→  };
+   220→   220→
+   221→   221→  if (loading && !detail) {
+   222→   222→    return (
+   223→   223→      <div className="space-y-4">
+   224→   224→        <Button variant="ghost" size="sm" onClick={onBack}>
+   225→   225→          <ArrowLeft className="h-4 w-4" /> Back
+   226→   226→        </Button>
+   227→   227→        <Skeleton className="h-36 rounded-xl" />
+   228→   228→        <Skeleton className="h-12 w-72 rounded-lg" />
+   229→   229→        <Skeleton className="h-96 rounded-xl" />
+   230→   230→      </div>
+   231→   231→    );
+   232→   232→  }
+   233→   233→  if (error || !detail) {
+   234→   234→    return (
+   235→   235→      <div className="space-y-4">
+   236→   236→        <Button variant="ghost" size="sm" onClick={onBack}>
+   237→   237→          <ArrowLeft className="h-4 w-4" /> Back
+   238→   238→        </Button>
+   239→   239→        <ErrorAlert message={error ?? "Submission not found"} onRetry={reload} />
+   240→   240→      </div>
+   241→   241→    );
+   242→   242→  }
+   243→   243→
+   244→   244→  const lang = detail.submission.templateLang;
+   245→   245→
+   246→   246→  return (
+   247→   247→    <div className="space-y-4 pb-4">
+   248→   248→      <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2">
+   249→   249→        <ArrowLeft className="h-4 w-4" /> Back
+   250→   250→      </Button>
+   251→   251→
+   252→   252→      <div className={cn("grid gap-4", detail.document ? "xl:grid-cols-3" : "")}>
+   253→   253→        {/* Header card */}
+   254→   254→        <Card className={cn(detail.document ? "xl:col-span-2" : "")}>
+   255→   255→          <CardContent className="space-y-4">
+   256→   256→            <div className="flex flex-wrap items-start justify-between gap-4">
+   257→   257→              <div className="min-w-0 space-y-1.5">
+   258→   258→                <div className="flex flex-wrap items-center gap-2">
+   259→   259→                  <h1 className="text-lg font-semibold tracking-tight">Barangay {detail.barangay.name}</h1>
+   260→   260→                  <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{detail.barangay.code}</code>
+   261→   261→                  <StatusBadge status={detail.submission.status} />
+   262→   262→                </div>
+   263→   263→                <p className="text-sm text-muted-foreground">
+   264→   264→                  {detail.barangay.captain ? `Punong Barangay ${detail.barangay.captain} · ` : ""}BDRRMP {detail.submission.year}
+   265→   265→                </p>
+   266→   266→                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+   267→   267→                  <span>
+   268→   268→                    Version <span className="font-mono font-semibold text-foreground">v{detail.submission.version}</span>
+   269→   269→                  </span>
+   270→   270→                  <span>
+   271→   271→                    Template{" "}
+   272→   272→                    <span className="rounded border border-border bg-muted px-1 py-0.5 font-semibold text-foreground">{lang === "TL" ? "TL" : "EN"}</span>
+   273→   273→                  </span>
+   274→   274→                  <span>Submitted {formatDateTime(detail.submission.submittedAt)}</span>
+   275→   275→                </div>
+   276→   276→                <div className="flex max-w-xs items-center gap-2 pt-1">
+   277→   277→                  <Progress value={detail.submission.progress} className="h-2 flex-1" />
+   278→   278→                  <span className="text-xs tabular-nums text-muted-foreground">{detail.submission.progress}%</span>
+   279→   279→                </div>
+   280→   280→              </div>
+   281→   281→
+   282→   282→              {/* Contextual actions */}
+   283→   283→              <div className="flex flex-wrap items-center gap-2">
+   284→   284→                {canStartReview && (
+   285→   285→                  <Button disabled={busy} onClick={() => void runReviewAction({ action: "start" }, "Review started")}>
+   286→   286→                    <ClipboardList className="h-4 w-4" /> Start Review
+   287→   287→                  </Button>
+   288→   288→                )}
+   289→   289→                {st === "UNDER_REVIEW" && (
+   290→   290→                  <Button
+   291→   291→                    variant="outline"
+   292→   292→                    onClick={() => {
+   293→   293→                      setTab("submission");
+   294→   294→                      toast({ title: "Add comments per section", description: "Write a comment under any section below, then submit them from the action bar." });
+   295→   295→                    }}
+   296→   296→                  >
+   297→   297→                    <MessageSquare className="h-4 w-4" /> Add Comments
+   298→   298→                  </Button>
+   299→   299→                )}
+   300→   300→                {canRequestRevision && (
+   301→   301→                  <Button
+   302→   302→                    variant="outline"
+   303→   303→                    disabled={pending.length === 0 || busy}
+   304→   304→                    className="border-amber-300 text-amber-800 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/40"
+   305→   305→                    onClick={() => setRevisionOpen(true)}
+   306→   306→                  >
+   307→   307→                    <Undo2 className="h-4 w-4" /> Request Revision
+   308→   308→                  </Button>
+   309→   309→                )}
+   310→   310→                {canApprove &&
+   311→   311→                  (hasRating ? (
+   312→   312→                    <Button
+   313→   313→                      disabled={busy}
+   314→   314→                      className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+   315→   315→                      onClick={() => setApproveOpen(true)}
+   316→   316→                    >
+   317→   317→                      <CheckCircle2 className="h-4 w-4" /> Approve
+   318→   318→                    </Button>
+   319→   319→                  ) : (
+   320→   320→                    <HintButton hint="Complete the evaluation first (Evaluation tab)">
+   321→   321→                      <Button disabled className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500">
+   322→   322→                        <CheckCircle2 className="h-4 w-4" /> Approve
+   323→   323→                      </Button>
+   324→   324→                    </HintButton>
+   325→   325→                  ))}
+   326→   326→                {canFinalize && (
+   327→   327→                  <Button onClick={() => void openFinalize()}>
+   328→   328→                    <FileSignature className="h-4 w-4" /> Finalize Document
+   329→   329→                  </Button>
+   330→   330→                )}
+   331→   331→                {canRegenerate && (
+   332→   332→                  <Button variant="outline" onClick={() => void openFinalize()}>
+   333→   333→                    <FileSignature className="h-4 w-4" /> Regenerate Final Document
+   334→   334→                  </Button>
+   335→   335→                )}
+   336→   336→                {canArchive && (
+   337→   337→                  <Button variant="ghost" disabled={busy} onClick={() => setArchiveOpen(true)}>
+   338→   338→                    <Archive className="h-4 w-4" /> Archive
+   339→   339→                  </Button>
+   340→   340→                )}
+   341→   341→              </div>
+   342→   342→            </div>
+   343→   343→
+   344→   344→            {st === "NEEDS_REVISION" && (
+   345→   345→              <Alert className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+   346→   346→                <Clock className="h-4 w-4" />
+   347→   347→                <AlertTitle>Waiting for barangay to resubmit</AlertTitle>
+   348→   348→                <AlertDescription className="text-amber-800 dark:text-amber-300">
+   349→   349→                  A revision request was sent to the barangay. You can still review the current version and approve it directly if the
+   350→   350→                  submitted revision is already satisfactory.
+   351→   351→                </AlertDescription>
+   352→   352→              </Alert>
+   353→   353→            )}
+   354→   354→            {!reviewable && st !== undefined && ["NOT_STARTED", "DRAFT", "READY_FOR_SUBMISSION"].includes(st) && (
+   355→   355→              <Alert>
+   356→   356→                <AlertTriangle className="h-4 w-4" />
+   357→   357→                <AlertTitle>Not yet submitted</AlertTitle>
+   358→   358→                <AlertDescription>
+   359→   359→                  This barangay has not submitted its BDRRMP yet — the content below is a read-only view of their draft.
+   360→   360→                </AlertDescription>
+   361→   361→              </Alert>
+   362→   362→            )}
+   363→   363→          </CardContent>
+   364→   364→        </Card>
+   365→   365→
+   366→   366→        {/* Final document card */}
+   367→   367→        {detail.document && <DocumentCard document={detail.document} />}
+   368→   368→      </div>
+   369→   369→
+   370→   370→      <Tabs value={tab} onValueChange={setTab}>
+   371→   371→        <TabsList>
+   372→   372→          <TabsTrigger value="submission">Submission</TabsTrigger>
+   373→   373→          <TabsTrigger value="evaluation">Evaluation</TabsTrigger>
+   374→   374→          <TabsTrigger value="history">
+   375→   375→            <History className="h-4 w-4" /> History
+   376→   376→          </TabsTrigger>
+   377→   377→        </TabsList>
+   378→   378→
+   379→   379→        {/* ---------------- Submission tab ---------------- */}
+   380→   380→        <TabsContent value="submission" className="space-y-3">
+   381→   381→          <Accordion type="single" collapsible defaultValue={detail.sections[0]?.key} className="space-y-3">
+   382→   382→            {detail.sections.map((section, i) => (
+   383→   383→              <SectionAccordion
+   384→   384→                key={section.key}
+   385→   385→                index={i + 1}
+   386→   386→                section={section}
+   387→   387→                lang={lang}
+   388→   388→                values={detail.submission.values}
+   389→   389→                files={filesBySection.get(section.key) ?? []}
+   390→   390→                comments={commentsBySection.get(section.key) ?? []}
+   391→   391→                pendingComments={pending.filter((p) => p.sectionKey === section.key)}
+   392→   392→                draft={drafts[section.key] ?? ""}
+   393→   393→                onDraftChange={(v) => setDrafts((d) => ({ ...d, [section.key]: v }))}
+   394→   394→                onAddPending={() => addPending(section.key)}
+   395→   395→                onRemovePending={(pid) => setPending((p) => p.filter((x) => x.id !== pid))}
+   396→   396→                reviewable={reviewable}
+   397→   397→                busy={busy}
+   398→   398→              />
+   399→   399→            ))}
+   400→   400→          </Accordion>
+   401→   401→        </TabsContent>
+   402→   402→
+   403→   403→        {/* ---------------- Evaluation tab ---------------- */}
+   404→   404→        <TabsContent value="evaluation">
+   405→   405→          <Card className="max-w-2xl">
+   406→   406→            <CardHeader>
+   407→   407→              <CardTitle className="text-base">MDRRMO EVALUATION</CardTitle>
+   408→   408→              <CardDescription>
+   409→   409→                Quality Assurance Team rating for Barangay {detail.barangay.name}&apos;s BDRRMP {detail.submission.year} (v
+   410→   410→                {detail.submission.version})
+   411→   411→              </CardDescription>
+   412→   412→            </CardHeader>
+   413→   413→            <CardContent className="space-y-4">
+   414→   414→              {detail.criteria.length === 0 && <p className="text-sm text-muted-foreground">No rating criteria configured (see Settings).</p>}
+   415→   415→              {detail.criteria.map((c) => (
+   416→   416→                <div key={c.key} className="flex items-center gap-3">
+   417→   417→                  <Label htmlFor={`score-${c.key}`} className="flex-1 text-sm font-normal">
+   418→   418→                    {c.name}
+   419→   419→                  </Label>
+   420→   420→                  <Input
+   421→   421→                    id={`score-${c.key}`}
+   422→   422→                    type="number"
+   423→   423→                    min={0}
+   424→   424→                    max={c.maxScore}
+   425→   425→                    inputMode="numeric"
+   426→   426→                    className="w-20 text-right tabular-nums"
+   427→   427→                    value={scores[c.key] ?? ""}
+   428→   428→                    onChange={(e) => {
+   429→   429→                      const v = e.target.value === "" ? undefined : Number(e.target.value);
+   430→   430→                      setScores((s) => {
+   431→   431→                        const next = { ...s };
+   432→   432→                        if (v === undefined || Number.isNaN(v)) delete next[c.key];
+   433→   433→                        else next[c.key] = v;
+   434→   434→                        return next;
+   435→   435→                      });
+   436→   436→                    }}
+   437→   437→                    aria-label={`Score for ${c.name}`}
+   438→   438→                  />
+   439→   439→                  <span className="w-12 text-sm text-muted-foreground">/ {c.maxScore}</span>
+   440→   440→                </div>
+   441→   441→              ))}
+   442→   442→              <div className="flex items-center justify-between border-t pt-3">
+   443→   443→                <span className="text-sm font-medium">Total</span>
+   444→   444→                <span className="text-lg font-semibold tabular-nums">
+   445→   445→                  {detail.criteria.reduce((a, c) => a + (scores[c.key] ?? 0), 0)} / {detail.criteria.reduce((a, c) => a + c.maxScore, 0)}
+   446→   446→                </span>
+   447→   447→              </div>
+   448→   448→              <div className="space-y-1.5">
+   449→   449→                <Label htmlFor="eval-remarks" className="text-sm font-normal">
+   450→   450→                  Remarks
+   451→   451→                </Label>
+   452→   452→                <Textarea id="eval-remarks" rows={3} value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Overall observations, strengths, recommendations..." />
+   453→   453→              </div>
+   454→   454→              <p className="text-xs text-muted-foreground">
+   455→   455→                Score guide: {detail.criteria[0]?.maxScore ?? 25} = Excellent, 0 = Missing
+   456→   456→              </p>
+   457→   457→              {detail.rating && (
+   458→   458→                <p className="text-xs text-muted-foreground">
+   459→   459→                  Last saved: {detail.rating.total}/{detail.rating.maxTotal}
+   460→   460→                  {detail.rating.ratedByName ? ` by ${detail.rating.ratedByName}` : ""} on {formatDateTime(detail.rating.createdAt)}
+   461→   461→                </p>
+   462→   462→              )}
+   463→   463→              <div>
+   464→   464→                <Button
+   465→   465→                  disabled={
+   466→   466→                    busy ||
+   467→   467→                    detail.criteria.length === 0 ||
+   468→   468→                    !detail.criteria.every((c) => scores[c.key] !== undefined && scores[c.key] >= 0 && scores[c.key] <= c.maxScore)
+   469→   469→                  }
+   470→   470→                  onClick={async () => {
+   471→   471→                    setBusy(true);
+   472→   472→                    try {
+   473→   473→                      await api.adminRating(id, scores, remarks);
+   474→   474→                      toast({ title: "Evaluation saved" });
+   475→   475→                      reload();
+   476→   476→                      onChanged?.();
+   477→   477→                    } catch (e) {
+   478→   478→                      toast({
+   479→   479→                        title: "Could not save evaluation",
+   480→   480→                        description: e instanceof Error ? e.message : "Please try again.",
+   481→   481→                        variant: "destructive",
+   482→   482→                      });
+   483→   483→                    } finally {
+   484→   484→                      setBusy(false);
+   485→   485→                    }
+   486→   486→                  }}
+   487→   487→                >
+   488→   488→                  Save Evaluation
+   489→   489→                </Button>
+   490→   490→              </div>
+   491→   491→            </CardContent>
+   492→   492→          </Card>
+   493→   493→        </TabsContent>
+   494→   494→
+   495→   495→        {/* ---------------- History tab ---------------- */}
+   496→   496→        <TabsContent value="history" className="grid gap-4 lg:grid-cols-2">
+   497→   497→          <Card className="self-start">
+   498→   498→            <CardHeader>
+   499→   499→              <CardTitle className="text-base">Review Timeline</CardTitle>
+   500→   500→              <CardDescription>All MDRRMO actions on this submission</CardDescription>
+   501→   501→            </CardHeader>
+   502→   502→            <CardContent>
+   503→   503→              {detail.reviews.length === 0 && <p className="text-sm text-muted-foreground">No reviews recorded yet.</p>}
+   504→   504→              <ul className="space-y-4">
+   505→   505→                {detail.reviews
+   506→   506→                  .slice()
+   507→   507→                  .reverse()
+   508→   508→                  .map((r) => (
+   509→   509→                    <li key={r.id} className="relative border-l-2 border-primary/30 pl-4">
+   510→   510→                      <span className="absolute -left-[5px] top-1 h-2 w-2 rounded-full bg-primary" />
+   511→   511→                      <div className="flex flex-wrap items-center gap-2">
+   512→   512→                        {reviewActionBadge(r.action)}
+   513→   513→                        <span className="text-sm font-medium">{r.reviewerName}</span>
+   514→   514→                        <span className="font-mono text-xs text-muted-foreground">v{r.version}</span>
+   515→   515→                        <span className="ml-auto text-xs text-muted-foreground">{formatDateTime(r.createdAt)}</span>
+   516→   516→                      </div>
+   517→   517→                      {r.overallComment && <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{r.overallComment}</p>}
+   518→   518→                    </li>
+   519→   519→                  ))}
+   520→   520→              </ul>
+   521→   521→            </CardContent>
+   522→   522→          </Card>
+   523→   523→
+   524→   524→          <div className="space-y-4">
+   525→   525→            <Card className="self-start">
+   526→   526→              <CardHeader>
+   527→   527→                <CardTitle className="text-base">Versions</CardTitle>
+   528→   528→              </CardHeader>
+   529→   529→              <CardContent className="space-y-2 text-sm">
+   530→   530→                <div className="flex items-center justify-between">
+   531→   531→                  <span>
+   532→   532→                    Current version <span className="font-mono font-semibold">v{detail.submission.version}</span>
+   533→   533→                  </span>
+   534→   534→                  <span className="text-xs text-muted-foreground">submitted {formatDateTime(detail.submission.submittedAt)}</span>
+   535→   535→                </div>
+   536→   536→                {detail.submission.approvedAt && (
+   537→   537→                  <div className="flex items-center justify-between">
+   538→   538→                    <span>Approved</span>
+   539→   539→                    <span className="text-xs text-muted-foreground">{formatDateTime(detail.submission.approvedAt)}</span>
+   540→   540→                  </div>
+   541→   541→                )}
+   542→   542→                {detail.rating && (
+   543→   543→                  <div className="flex items-center justify-between">
+   544→   544→                    <span>Evaluation</span>
+   545→   545→                    <span className="text-xs text-muted-foreground">
+   546→   546→                      {detail.rating.total}/{detail.rating.maxTotal} · {formatDate(detail.rating.createdAt)}
+   547→   547→                    </span>
+   548→   548→                  </div>
+   549→   549→                )}
+   550→   550→              </CardContent>
+   551→   551→            </Card>
+   552→   552→            {detail.document && <DocumentCard document={detail.document} compact />}
+   553→   553→          </div>
+   554→   554→        </TabsContent>
+   555→   555→      </Tabs>
+   556→   556→
+   557→   557→      {/* Sticky action bar for reviewable statuses */}
+   558→   558→      {reviewable && (
+   559→   559→        <div className="sticky bottom-4 z-30">
+   560→   560→          <Card className="border-primary/40 shadow-lg">
+   561→   561→            <CardContent className="flex flex-wrap items-center gap-2 py-3">
+   562→   562→              <span className="inline-flex items-center gap-2 text-sm font-medium">
+   563→   563→                <MessageSquare className="h-4 w-4 text-primary" />
+   564→   564→                {pending.length} pending comment{pending.length === 1 ? "" : "s"}
+   565→   565→              </span>
+   566→   566→              {pending.length > 0 && (
+   567→   567→                <Button size="sm" variant="ghost" onClick={() => setPending([])} aria-label="Discard pending comments">
+   568→   568→                  <Trash2 className="h-3.5 w-3.5" /> Discard
+   569→   569→                </Button>
+   570→   570→              )}
+   571→   571→              <div className="ml-auto flex flex-wrap items-center gap-2">
+   572→   572→                <Button size="sm" disabled={pending.length === 0 || busy} onClick={() => void runReviewAction(
+   573→   573→                  { action: "comment", comments: pending.map((p) => ({ ...p, requiresRevision: false })) },
+   574→   574→                  `${pending.length} comment${pending.length === 1 ? "" : "s"} sent to the barangay`,
+   575→   575→                  { clearPending: true }
+   576→   576→                )}>
+   577→   577→                  <Send className="h-4 w-4" /> Submit Comments
+   578→   578→                </Button>
+   579→   579→                {canRequestRevision && (
+   580→   580→                  <Button
+   581→   581→                    size="sm"
+   582→   582→                    variant="outline"
+   583→   583→                    disabled={pending.length === 0 || busy}
+   584→   584→                    className="border-amber-300 text-amber-800 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/40"
+   585→   585→                    onClick={() => setRevisionOpen(true)}
+   586→   586→                  >
+   587→   587→                    <Undo2 className="h-4 w-4" /> Request Revision
+   588→   588→                  </Button>
+   589→   589→                )}
+   590→   590→                {canApprove &&
+   591→   591→                  (hasRating ? (
+   592→   592→                    <Button
+   593→   593→                      size="sm"
+   594→   594→                      disabled={busy}
+   595→   595→                      className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+   596→   596→                      onClick={() => setApproveOpen(true)}
+   597→   597→                    >
+   598→   598→                      <CheckCircle2 className="h-4 w-4" /> Approve
+   599→   599→                    </Button>
+   600→   600→                  ) : (
+   601→   601→                    <HintButton hint="Complete the evaluation first (Evaluation tab)">
+   602→   602→                      <Button size="sm" disabled className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500">
+   603→   603→                        <CheckCircle2 className="h-4 w-4" /> Approve
+   604→   604→                      </Button>
+   605→   605→                    </HintButton>
+   606→   606→                  ))}
+   607→   607→              </div>
+   608→   608→            </CardContent>
+   609→   609→          </Card>
+   610→   610→        </div>
+   611→   611→      )}
+   612→   612→
+   613→   613→      {/* ---------- Request Revision dialog ---------- */}
+   614→   614→      <Dialog open={revisionOpen} onOpenChange={(o) => !busy && setRevisionOpen(o)}>
+   615→   615→        <DialogContent className="sm:max-w-lg">
+   616→   616→          <DialogHeader>
+   617→   617→            <DialogTitle>Request Revision</DialogTitle>
+   618→   618→            <DialogDescription>
+   619→   619→              {pending.length} section comment{pending.length === 1 ? "" : "s"} will be sent to Barangay {detail.barangay.name} marked as
+   620→   620→              requiring revision. The barangay must correct the flagged sections and resubmit.
+   621→   621→            </DialogDescription>
+   622→   622→          </DialogHeader>
+   623→   623→          <div className="space-y-1.5">
+   624→   624→            <Label htmlFor="revision-overall">Overall comment (optional)</Label>
+   625→   625→            <Textarea
+   626→   626→              id="revision-overall"
+   627→   627→              rows={3}
+   628→   628→              value={revisionOverall}
+   629→   629→              onChange={(e) => setRevisionOverall(e.target.value)}
+   630→   630→              placeholder="Summary of required corrections..."
+   631→   631→            />
+   632→   632→          </div>
+   633→   633→          <DialogFooter>
+   634→   634→            <Button variant="outline" disabled={busy} onClick={() => setRevisionOpen(false)}>
+   635→   635→              Cancel
+   636→   636→            </Button>
+   637→   637→            <Button
+   638→   638→              disabled={busy}
+   639→   639→              className="bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600"
+   640→   640→              onClick={() =>
+   641→   641→                void runReviewAction(
+   642→   642→                  { action: "revision", comments: pending.map((p) => ({ ...p, requiresRevision: true })), overallComment: revisionOverall },
+   643→   643→                  "Revision requested",
+   644→   644→                  { clearPending: true, closeDialog: () => { setRevisionOpen(false); setRevisionOverall(""); } }
+   645→   645→                )
+   646→   646→              }
+   647→   647→            >
+   648→   648→              <Undo2 className="h-4 w-4" /> Send Revision Request
+   649→   649→            </Button>
+   650→   650→          </DialogFooter>
+   651→   651→        </DialogContent>
+   652→   652→      </Dialog>
+   653→   653→
+   654→   654→      {/* ---------- Approve dialog ---------- */}
+   655→   655→      <Dialog open={approveOpen} onOpenChange={(o) => !busy && setApproveOpen(o)}>
+   656→   656→        <DialogContent className="sm:max-w-lg">
+   657→   657→          <DialogHeader>
+   658→   658→            <DialogTitle>Approve this BDRRMP?</DialogTitle>
+   659→   659→            <DialogDescription>
+   660→   660→              Barangay {detail.barangay.name} — BDRRMP {detail.submission.year} (v{detail.submission.version})
+   661→   661→            </DialogDescription>
+   662→   662→          </DialogHeader>
+   663→   663→          <Alert className="border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+   664→   664→            <CheckCircle2 className="h-4 w-4" />
+   665→   665→            <AlertTitle>Evaluation on record</AlertTitle>
+   666→   666→            <AlertDescription className="text-emerald-800 dark:text-emerald-300">
+   667→   667→              {detail.rating
+   668→   668→                ? `The saved evaluation (${detail.rating.total}/${detail.rating.maxTotal}) will be attached to this approval.`
+   669→   669→                : "No evaluation on record."}
+   670→   670→            </AlertDescription>
+   671→   671→          </Alert>
+   672→   672→          <div className="space-y-1.5">
+   673→   673→            <Label htmlFor="approve-overall">Overall comment (optional)</Label>
+   674→   674→            <Textarea
+   675→   675→              id="approve-overall"
+   676→   676→              rows={3}
+   677→   677→              value={approveOverall}
+   678→   678→              onChange={(e) => setApproveOverall(e.target.value)}
+   679→   679→              placeholder="Congratulations / notes for the barangay..."
+   680→   680→            />
+   681→   681→          </div>
+   682→   682→          <DialogFooter>
+   683→   683→            <Button variant="outline" disabled={busy} onClick={() => setApproveOpen(false)}>
+   684→   684→              Cancel
+   685→   685→            </Button>
+   686→   686→            <Button
+   687→   687→              disabled={busy}
+   688→   688→              className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
+   689→   689→              onClick={() =>
+   690→   690→                void runReviewAction({ action: "approve", overallComment: approveOverall }, "BDRRMP approved", {
+   691→   691→                  closeDialog: () => {
+   692→   692→                    setApproveOpen(false);
+   693→   693→                    setApproveOverall("");
+   694→   694→                  },
+   695→   695→                })
+   696→   696→              }
+   697→   697→            >
+   698→   698→              <CheckCircle2 className="h-4 w-4" /> Approve Submission
+   699→   699→            </Button>
+   700→   700→          </DialogFooter>
+   701→   701→        </DialogContent>
+   702→   702→      </Dialog>
+   703→   703→
+   704→   704→      {/* ---------- Finalize & sign dialog ---------- */}
+   705→   705→      <Dialog open={finalizeOpen} onOpenChange={(o) => !finalizing && setFinalizeOpen(o)}>
+   706→   706→        <DialogContent className="sm:max-w-lg">
+   707→   707→          <DialogHeader>
+   708→   708→            <DialogTitle className="flex items-center gap-2">
+   709→   709→              <FileSignature className="h-5 w-5 text-primary" /> Finalize &amp; Sign Document
+   710→   710→            </DialogTitle>
+   711→   711→            <DialogDescription>
+   712→   712→              Barangay {detail.barangay.name} — BDRRMP {detail.submission.year} (v{detail.submission.version})
+   713→   713→            </DialogDescription>
+   714→   714→          </DialogHeader>
+   715→   715→          <ul className="space-y-1.5 text-sm">
+   716→   716→            <li className="flex items-center gap-2">
+   717→   717→              <CheckCircle2 className={cn("h-4 w-4", detail.reviews.length > 0 ? "text-emerald-600" : "text-muted-foreground")} />
+   718→   718→              Reviewed {detail.reviews.length > 0 ? "✓" : "(no review actions recorded)"}
+   719→   719→            </li>
+   720→   720→            <li className="flex items-center gap-2">
+   721→   721→              <CheckCircle2 className={cn("h-4 w-4", st === "APPROVED" || st === "READY_FOR_DOWNLOAD" ? "text-emerald-600" : "text-muted-foreground")} />
+   722→   722→              Approved {st === "APPROVED" || st === "READY_FOR_DOWNLOAD" ? "✓" : "(pending)"}
+   723→   723→            </li>
+   724→   724→            <li className="flex items-center gap-2">
+   725→   725→              <CheckCircle2 className={cn("h-4 w-4", hasRating ? "text-emerald-600" : "text-amber-600")} />
+   726→   726→              Rated {hasRating ? `✓ (${detail.rating?.total}/${detail.rating?.maxTotal})` : "(save the evaluation first)"}
+   727→   727→            </li>
+   728→   728→          </ul>
+   729→   729→          <div className="grid gap-3">
+   730→   730→            <div className="space-y-1.5">
+   731→   731→              <Label htmlFor="finalize-name">Signatory name</Label>
+   732→   732→              <Input id="finalize-name" value={finalizeName} onChange={(e) => setFinalizeName(e.target.value)} placeholder="Authorized signatory" />
+   733→   733→            </div>
+   734→   734→            <div className="space-y-1.5">
+   735→   735→              <Label htmlFor="finalize-position">Signatory position</Label>
+   736→   736→              <Input id="finalize-position" value={finalizePosition} onChange={(e) => setFinalizePosition(e.target.value)} placeholder="e.g., Municipal DRRM Officer" />
+   737→   737→            </div>
+   738→   738→          </div>
+   739→   739→          <p className="rounded-lg bg-muted p-3 text-xs text-muted-foreground">
+   740→   740→            The authorized signature and a QR verification code will be embedded in the final PDF. The barangay download will be unlocked.
+   741→   741→          </p>
+   742→   742→          <DialogFooter>
+   743→   743→            <Button variant="outline" disabled={finalizing} onClick={() => setFinalizeOpen(false)}>
+   744→   744→              Cancel
+   745→   745→            </Button>
+   746→   746→            <Button disabled={finalizing || !finalizeName.trim() || !finalizePosition.trim()} onClick={() => void doFinalize()}>
+   747→   747→              {finalizing ? (
+   748→   748→                <>
+   749→   749→                  <Loader2 className="h-4 w-4 animate-spin" /> Generating PDF...
+   750→   750→                </>
+   751→   751→              ) : (
+   752→   752→                <>
+   753→   753→                  <FileSignature className="h-4 w-4" /> Sign &amp; Generate PDF
+   754→   754→                </>
+   755→   755→              )}
+   756→   756→            </Button>
+   757→   757→          </DialogFooter>
+   758→   758→        </DialogContent>
+   759→   759→      </Dialog>
+   760→   760→
+   761→   761→      {/* ---------- Finalize success dialog ---------- */}
+   762→   762→      <Dialog open={!!finalizeResult} onOpenChange={(o) => !o && setFinalizeResult(null)}>
+   763→   763→        <DialogContent className="sm:max-w-md">
+   764→   764→          <DialogHeader>
+   765→   765→            <DialogTitle className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+   766→   766→              <FileCheck2 className="h-5 w-5" /> Final document generated
+   767→   767→            </DialogTitle>
+   768→   768→            <DialogDescription>The signed BDRRMP PDF is ready and the barangay download has been unlocked.</DialogDescription>
+   769→   769→          </DialogHeader>
+   770→   770→          <div className="space-y-3">
+   771→   771→            <div className="rounded-xl border-2 border-dashed border-emerald-300 bg-emerald-50/60 p-4 text-center dark:border-emerald-800 dark:bg-emerald-950/30">
+   772→   772→              <div className="text-xs font-medium uppercase tracking-widest text-muted-foreground">Document ID</div>
+   773→   773→              <div className="mt-1 select-all break-all font-mono text-lg font-bold text-emerald-700 dark:text-emerald-400">{finalizeResult?.docId}</div>
+   774→   774→              <div className="mt-2 flex justify-center">
+   775→   775→                <CopyButton value={finalizeResult?.docId ?? ""} label="Copy Document ID" />
+   776→   776→              </div>
+   777→   777→            </div>
+   778→   778→            <p className="text-sm text-muted-foreground">
+   779→   779→              Size: {finalizeResult ? fileSize(finalizeResult.size) : "—"} · Signed by {finalizeResult?.signedBy}
+   780→   780→            </p>
+   781→   781→            <a
+   782→   782→              href={finalizeResult?.verifyUrl ?? "#"}
+   783→   783→              target="_blank"
+   784→   784→              rel="noreferrer"
+   785→   785→              className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+   786→   786→            >
+   787→   787→              <ExternalLink className="h-4 w-4" /> Open QR verification page
+   788→   788→            </a>
+   789→   789→          </div>
+   790→   790→          <DialogFooter>
+   791→   791→            <Button onClick={() => setFinalizeResult(null)}>Done</Button>
+   792→   792→          </DialogFooter>
+   793→   793→        </DialogContent>
+   794→   794→      </Dialog>
+   795→   795→
+   796→   796→      {/* ---------- Archive confirm ---------- */}
+   797→   797→      <AlertDialog open={archiveOpen} onOpenChange={setArchiveOpen}>
+   798→   798→        <AlertDialogContent>
+   799→   799→          <AlertDialogHeader>
+   800→   800→            <AlertDialogTitle>Archive this BDRRMP?</AlertDialogTitle>
+   801→   801→            <AlertDialogDescription>
+   802→   802→              Barangay {detail.barangay.name}&apos;s BDRRMP {detail.submission.year} will be marked as archived for record keeping. The final
+   803→   803→              document remains verifiable via its QR code.
+   804→   804→            </AlertDialogDescription>
+   805→   805→          </AlertDialogHeader>
+   806→   806→          <AlertDialogFooter>
+   807→   807→            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+   808→   808→            <AlertDialogAction
+   809→   809→              disabled={busy}
+   810→   810→              onClick={() => void runReviewAction({ action: "archive" }, "Submission archived", { closeDialog: () => setArchiveOpen(false) })}
+   811→   811→            >
+   812→   812→              Archive
+   813→   813→            </AlertDialogAction>
+   814→   814→          </AlertDialogFooter>
+   815→   815→        </AlertDialogContent>
+   816→   816→      </AlertDialog>
+   817→   817→    </div>
+   818→   818→  );
+   819→   819→}
+   820→   820→
+   821→   821→// Wraps a (possibly disabled) button with a tooltip — disabled buttons swallow
+   822→   822→// pointer events, so the trigger must sit on a wrapping span.
+   823→   823→function HintButton({ hint, children }: { hint: string; children: ReactNode }) {
+   824→   824→  return (
+   825→   825→    <TooltipProvider delayDuration={100}>
+   826→   826→      <Tooltip>
+   827→   827→        <TooltipTrigger asChild>
+   828→   828→          <span tabIndex={0} aria-label={hint} className="inline-flex">
+   829→   829→            {children}
+   830→   830→          </span>
+   831→   831→        </TooltipTrigger>
+   832→   832→        <TooltipContent side="top">{hint}</TooltipContent>
+   833→   833→      </Tooltip>
+   834→   834→    </TooltipProvider>
+   835→   835→  );
+   836→   836→}
+   837→   837→
+   838→   838→// ---------------------------------------------------------------------------
+   839→   839→// Final document info card
+   840→   840→// ---------------------------------------------------------------------------
+   841→   841→function DocumentCard({
+   842→   842→  document,
+   843→   843→  compact,
+   844→   844→}: {
+   845→   845→  document: NonNullable<AdminSubmissionDetail["document"]>;
+   846→   846→  compact?: boolean;
+   847→   847→}) {
+   848→   848→  return (
+   849→   849→    <Card className="self-start">
+   850→   850→      <CardHeader className={compact ? "pb-2" : undefined}>
+   851→   851→        <CardTitle className="flex items-center gap-2 text-base">
+   852→   852→          <FileCheck2 className="h-4 w-4 text-primary" /> Final Document
+   853→   853→        </CardTitle>
+   854→   854→      </CardHeader>
+   855→   855→      <CardContent className="space-y-2 text-sm">
+   856→   856→        <div className="flex flex-wrap items-center justify-between gap-2">
+   857→   857→          <code className="break-all rounded-md bg-muted px-2 py-1 font-mono text-xs font-semibold">{document.docId}</code>
+   858→   858→          <CopyButton value={document.docId} label="Copy" />
+   859→   859→        </div>
+   860→   860→        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+   861→   861→          <div>
+   862→   862→            Version <span className="font-mono font-medium text-foreground">v{document.version}</span>
+   863→   863→          </div>
+   864→   864→          <div>
+   865→   865→            Language <span className="font-medium text-foreground">{document.lang === "TL" ? "Tagalog" : "English"}</span>
+   866→   866→          </div>
+   867→   867→          <div>
+   868→   868→            Signed by <span className="font-medium text-foreground">{document.signedBy ?? "—"}</span>
+   869→   869→          </div>
+   870→   870→          <div>
+   871→   871→            Signed at <span className="font-medium text-foreground">{formatDateTime(document.signedAt ?? null)}</span>
+   872→   872→          </div>
+   873→   873→          <div>
+   874→   874→            Generated <span className="font-medium text-foreground">{formatDateTime(document.generatedAt)}</span>
+   875→   875→          </div>
+   876→   876→          <div>
+   877→   877→            Downloads <span className="font-medium text-foreground tabular-nums">{document.downloadCount}</span>
+   878→   878→          </div>
+   879→   879→        </div>
+   880→   880→        {document.signed && (
+   881→   881→          <p className="text-[11px] text-muted-foreground">
+   882→   882→            Digitally signed by the MDRRMO — verifiable via the QR code embedded in the final PDF.
+   883→   883→          </p>
+   884→   884→        )}
+   885→   885→      </CardContent>
+   886→   886→    </Card>
+   887→   887→  );
+   888→   888→}
+   889→   889→
+   890→   890→// ---------------------------------------------------------------------------
+   891→   891→// One accordion section in the Submission tab
+   892→   892→// ---------------------------------------------------------------------------
+   893→   893→function SectionAccordion({
+   894→   894→  index,
+   895→   895→  section,
+   896→   896→  lang,
+   897→   897→  values,
+   898→   898→  files,
+   899→   899→  comments,
+   900→   900→  pendingComments,
+   901→   901→  draft,
+   902→   902→  onDraftChange,
+   903→   903→  onAddPending,
+   904→   904→  onRemovePending,
+   905→   905→  reviewable,
+   906→   906→  busy,
+   907→   907→}: {
+   908→   908→  index: number;
+   909→   909→  section: ClientSection;
+   910→   910→  lang: string | null;
+   911→   911→  values: Record<string, unknown>;
+   912→   912→  files: FileMeta[];
+   913→   913→  comments: CommentItem[];
+   914→   914→  pendingComments: PendingComment[];
+   915→   915→  draft: string;
+   916→   916→  onDraftChange: (v: string) => void;
+   917→   917→  onAddPending: () => void;
+   918→   918→  onRemovePending: (pendingId: number) => void;
+   919→   919→  reviewable: boolean;
+   920→   920→  busy: boolean;
+   921→   921→}) {
+   922→   922→  const complete = !!section.complete;
+   923→   923→  return (
+   924→   924→    <AccordionItem value={section.key} className="rounded-xl border px-4 data-[state=open]:bg-muted/20">
+   925→   925→      <AccordionTrigger className="py-3 hover:no-underline">
+   926→   926→        <span className="flex min-w-0 flex-1 items-center gap-2.5 pr-2">
+   927→   927→          <span
+   928→   928→            className={cn(
+   929→   929→              "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-bold",
+   930→   930→              complete ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400" : "bg-muted text-muted-foreground"
+   931→   931→            )}
+   932→   932→          >
+   933→   933→            {index}
+   934→   934→          </span>
+   935→   935→          <span className="min-w-0 flex-1 text-left">
+   936→   936→            <span className="block truncate text-sm font-medium">{section.title}</span>
+   937→   937→          </span>
+   938→   938→          <span className="flex shrink-0 items-center gap-1.5">
+   939→   939→            {complete ? (
+   940→   940→              <span title="Complete" className="text-emerald-600">
+   941→   941→                <CheckCircle2 className="h-4 w-4" />
+   942→   942→              </span>
+   943→   943→            ) : (
+   944→   944→              <span title={section.required ? "Incomplete (required)" : "Incomplete"} className="text-amber-600">
+   945→   945→                <AlertTriangle className="h-4 w-4" />
+   946→   946→              </span>
+   947→   947→            )}
+   948→   948→            {comments.length > 0 && (
+   949→   949→              <span
+   950→   950→                title={`${comments.length} MDRRMO comment(s) on this section`}
+   951→   951→                className="inline-flex items-center gap-0.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-800 dark:bg-violet-950 dark:text-violet-300"
+   952→   952→              >
+   953→   953→                <MessageSquare className="h-3 w-3" />
+   954→   954→                {comments.length}
+   955→   955→              </span>
+   956→   956→            )}
+   957→   957→            {section.requiresUpload && (
+   958→   958→              <span title="File upload required" className="text-muted-foreground">
+   959→   959→                <Paperclip className="h-4 w-4" />
+   960→   960→              </span>
+   961→   961→            )}
+   962→   962→          </span>
+   963→   963→        </span>
+   964→   964→      </AccordionTrigger>
+   965→   965→      <AccordionContent className="space-y-4 pb-4">
+   966→   966→        {section.desc && <p className="text-xs text-muted-foreground">{section.desc}</p>}
+   967→   967→
+   968→   968→        {/* Fields as definition grid */}
+   969→   969→        <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+   970→   970→          {section.fields.map((f) => (
+   971→   971→            <FieldRow key={f.key} field={f} value={values[f.key]} lang={lang} />
+   972→   972→          ))}
+   973→   973→        </dl>
+   974→   974→
+   975→   975→        {/* Uploaded files */}
+   976→   976→        {section.requiresUpload && (
+   977→   977→          <div className="space-y-1.5">
+   978→   978→            <h4 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+   979→   979→              <Paperclip className="h-3.5 w-3.5" /> {section.uploadLabel ?? "Attachment"}
+   980→   980→            </h4>
+   981→   981→            {files.length === 0 && (
+   982→   982→              <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">No file uploaded for this section.</p>
+   983→   983→            )}
+   984→   984→            <ul className="space-y-1.5">
+   985→   985→              {files.map((f) => (
+   986→   986→                <li key={f.id} className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2">
+   987→   987→                  <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+   988→   988→                  <span className="max-w-52 truncate text-sm font-medium">{f.filename}</span>
+   989→   989→                  <span className="text-xs text-muted-foreground">{fileSize(f.size)}</span>
+   990→   990→                  <FileStatusBadge status={f.status} />
+   991→   991→                  <span className="text-xs text-muted-foreground">{formatDateTime(f.uploadedAt)}</span>
+   992→   992→                  <a
+   993→   993→                    href={`/api/admin/files?fileId=${f.id}`}
+   994→   994→                    target="_blank"
+   995→   995→                    rel="noreferrer"
+   996→   996→                    className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+   997→   997→                  >
+   998→   998→                    <ExternalLink className="h-3.5 w-3.5" /> View / Download
+   999→   999→                  </a>
+  1000→  1000→                </li>
+  1001→  1001→              ))}
+  1002→  1002→            </ul>
+  1003→  1003→          </div>
+  1004→  1004→        )}
+  1005→  1005→
+  1006→  1006→        {/* Existing MDRRMO comments on this section */}
+  1007→  1007→        {comments.length > 0 && (
+  1008→  1008→          <div className="space-y-1.5">
+  1009→  1009→            <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">MDRRMO comments</h4>
+  1010→  1010→            {comments.map((c) => (
+  1011→  1011→              <div key={c.id} className="rounded-lg border-l-2 border-primary bg-muted/40 px-3 py-2">
+  1012→  1012→                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+  1013→  1013→                  <span className="font-medium text-foreground">{c.reviewerName}</span>
+  1014→  1014→                  <span>{formatDateTime(c.createdAt)}</span>
+  1015→  1015→                  <span className="font-mono">v{c.version}</span>
+  1016→  1016→                  {c.requiresRevision && (
+  1017→  1017→                    <span className="rounded-full border border-orange-300 bg-orange-50 px-1.5 py-0.5 font-semibold text-orange-800 dark:border-orange-800 dark:bg-orange-950/50 dark:text-orange-300">
+  1018→  1018→                      revision required
+  1019→  1019→                    </span>
+  1020→  1020→                  )}
+  1021→  1021→                </div>
+  1022→  1022→                <p className="mt-1 whitespace-pre-wrap text-sm">{c.comment}</p>
+  1023→  1023→              </div>
+  1024→  1024→            ))}
+  1025→  1025→          </div>
+  1026→  1026→        )}
+  1027→  1027→
+  1028→  1028→        {/* Pending (unsent) comments for this section */}
+  1029→  1029→        {pendingComments.length > 0 && (
+  1030→  1030→          <div className="space-y-1.5">
+  1031→  1031→            {pendingComments.map((p) => (
+  1032→  1032→              <div
+  1033→  1033→                key={p.id}
+  1034→  1034→                className="flex items-start gap-2 rounded-lg border border-dashed border-amber-400 bg-amber-50/70 px-3 py-2 dark:border-amber-700 dark:bg-amber-950/30"
+  1035→  1035→              >
+  1036→  1036→                <span className="rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:border-amber-700 dark:bg-amber-900 dark:text-amber-300">
+  1037→  1037→                  pending
+  1038→  1038→                </span>
+  1039→  1039→                <p className="flex-1 whitespace-pre-wrap text-sm">{p.comment}</p>
+  1040→  1040→                <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => onRemovePending(p.id)} aria-label="Remove pending comment">
+  1041→  1041→                  <X className="h-3.5 w-3.5" />
+  1042→  1042→                </Button>
+  1043→  1043→              </div>
+  1044→  1044→            ))}
+  1045→  1045→          </div>
+  1046→  1046→        )}
+  1047→  1047→
+  1048→  1048→        {/* Comment box */}
+  1049→  1049→        {reviewable && (
+  1050→  1050→          <div className="space-y-2 rounded-lg border border-dashed bg-muted/30 p-3">
+  1051→  1051→            <Label htmlFor={`comment-${section.key}`} className="text-xs font-medium text-muted-foreground">
+  1052→  1052→              Add MDRRMO comment to this section
+  1053→  1053→            </Label>
+  1054→  1054→            <Textarea
+  1055→  1055→              id={`comment-${section.key}`}
+  1056→  1056→              rows={2}
+  1057→  1057→              value={draft}
+  1058→  1058→              onChange={(e) => onDraftChange(e.target.value)}
+  1059→  1059→              placeholder="e.g., Hazard assessment must cover all puroks and indicate risk levels..."
+  1060→  1060→            />
+  1061→  1061→            <div className="flex justify-end">
+  1062→  1062→              <Button size="sm" variant="outline" disabled={!draft.trim() || busy} onClick={onAddPending}>
+  1063→  1063→                <MessageSquarePlus className="h-4 w-4" /> Add comment to this section
+  1064→  1064→              </Button>
+  1065→  1065→            </div>
+  1066→  1066→          </div>
+  1067→  1067→        )}
+  1068→  1068→      </AccordionContent>
+  1069→  1069→    </AccordionItem>
+  1070→  1070→  );
+  1071→  1071→}
+  1072→  1072→
+  1073→  1073→function FieldRow({ field, value, lang }: { field: TemplateFieldDef; value: unknown; lang: string | null }) {
+  1074→  1074→  const label = fieldLabel(field, lang);
+  1075→  1075→  const isLong = field.type === "textarea";
+  1076→  1076→  const arr = Array.isArray(value) ? (value as unknown[]) : null;
+  1077→  1077→  const empty = value === null || value === undefined || value === "" || (arr && arr.length === 0);
+  1078→  1078→  return (
+  1079→  1079→    <div className={cn("min-w-0", (isLong || arr) && "sm:col-span-2")}>
+  1080→  1080→      <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+  1081→  1081→        {label}
+  1082→  1082→        {field.required && <span className="ml-0.5 text-red-500">*</span>}
+  1083→  1083→      </dt>
+  1084→  1084→      <dd className="mt-0.5 text-sm">
+  1085→  1085→        {empty ? (
+  1086→  1086→          <span className="text-muted-foreground">—</span>
+  1087→  1087→        ) : arr ? (
+  1088→  1088→          <ul className="list-disc space-y-0.5 pl-4">
+  1089→  1089→            {arr.map((o, i) => (
+  1090→  1090→              <li key={i}>{String(o)}</li>
+  1091→  1091→            ))}
+  1092→  1092→          </ul>
+  1093→  1093→        ) : isLong ? (
+  1094→  1094→          <span className="whitespace-pre-wrap">{String(value)}</span>
+  1095→  1095→        ) : (
+  1096→  1096→          <span>
+  1097→  1097→            {String(value)}
+  1098→  1098→            {field.unit ? <span className="ml-1 text-xs text-muted-foreground">{field.unit}</span> : null}
+  1099→  1099→          </span>
+  1100→  1100→        )}
+  1101→  1101→      </dd>
+  1102→  1102→    </div>
+  1103→  1103→  );
+  1104→  1104→}
+  1105→  1105→

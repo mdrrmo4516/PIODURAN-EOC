@@ -83,7 +83,7 @@ const STATUS_HINTS: Record<SubmissionStatus, { en: string; tl: string }> = {
     tl: "May progreso na ang inyong BDRRMP. Buuin ang lahat ng kinakailangang seksyon.",
   },
   READY_FOR_SUBMISSION: {
-    en: "All requirements complete — review, validate and submit.",
+    en: "All references complete — review, validate and submit.",
     tl: "Kumpleto na ang mga kailangan — suriin at isumite na.",
   },
   SUBMITTED: {
@@ -151,7 +151,7 @@ export function SectionIcon({ icon, className }: { icon: string; className?: str
 }
 
 // ---------------------------------------------------------------------------
-// Requirement checklist icons
+// Reference checklist icons
 // ---------------------------------------------------------------------------
 
 export type ReqState = "complete" | "incomplete" | "notstarted";

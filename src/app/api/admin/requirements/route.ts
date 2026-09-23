@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { requireAdmin } from "@/lib/qas33/auth";
+import { requireAdmin, requireAdminRole } from "@/lib/qas33/auth";
 import { logAudit } from "@/lib/qas33/audit";
 
-// GET — template/requirements configuration (both languages + upload settings)
+// GET — template/references configuration (both languages + upload settings)
 export async function GET() {
   const resolved = await requireAdmin();
   if (!resolved || !resolved.admin) {
@@ -30,11 +30,11 @@ export async function GET() {
   });
 }
 
-// PUT — update a section's configuration
+// PUT — update a section's configuration (SYSTEM_ADMIN only — references are configured by the System Administrator)
 export async function PUT(request: NextRequest) {
-  const resolved = await requireAdmin();
+  const resolved = await requireAdminRole(["SYSTEM_ADMIN"]);
   if (!resolved || !resolved.admin) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "Only the System Administrator can configure the references." }, { status: 403 });
   }
   const body = await request.json();
   const key = String(body.key || "");

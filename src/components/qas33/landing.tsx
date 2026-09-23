@@ -62,7 +62,7 @@ import { useToast } from "@/hooks/use-toast";
 
 type VerifyResult = Awaited<ReturnType<typeof api.verify>>;
 
-const CONTAINER = "mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8";
+const CONTAINER = "mx-auto w-full px-4 sm:px-6 lg:px-8";
 
 const EXAMPLE_DOC_ID = "QAS33-BDRRMP-26-006-V2";
 
@@ -134,24 +134,31 @@ const FEATURES = [
 
 const DEMO_ACCOUNTS = [
   {
-    label: "Barangay — final document ready",
-    note: "Buenavista: approved plan, signed QR-verified PDF ready for download",
+    label: "Barangay Portal — Buenavista",
+    note: "Final signed BDRRMP document ready for download",
     user: "PD-BRG-006",
     secret: "QAS33-006",
     secretLabel: "PIN",
   },
   {
-    label: "Barangay — needs revision",
-    note: "Baliana: returned by MDRRMO with review comments to address",
-    user: "PD-BRG-004",
-    secret: "QAS33-004",
-    secretLabel: "PIN",
-  },
-  {
-    label: "MDRRMO Admin",
-    note: "Full review, tracking, rating, and monitoring dashboard",
+    label: "MDRRMO Officer — Noel F. Ordona",
+    note: "Reviews and approves BDRRMP submissions",
     user: "mdrrmo",
     secret: "PioDuran2026!",
+    secretLabel: "Password",
+  },
+  {
+    label: "MDRRMO Staff — Jun Carlo Anasco",
+    note: "Assists the review — comments, revision requests, evaluations",
+    user: "staff",
+    secret: "Staff2026!",
+    secretLabel: "Password",
+  },
+  {
+    label: "System Administrator — Tho Pogi",
+    note: "Manages user roles, settings and the database",
+    user: "sysadmin",
+    secret: "SysAdmin2026!",
     secretLabel: "Password",
   },
 ] as const;
@@ -1066,7 +1073,7 @@ function BarangayLoginDialog({
 }
 
 // ---------------------------------------------------------------------------
-// MDRRMO admin login dialog
+// MDRRMO / administrator login dialog (shared by Officer, Staff and SysAdmin)
 // ---------------------------------------------------------------------------
 
 function AdminLoginDialog({
@@ -1135,11 +1142,11 @@ function AdminLoginDialog({
               <span className="flex size-8 items-center justify-center rounded-lg bg-emerald-800 text-white">
                 <ShieldCheck className="size-4" />
               </span>
-              MDRRMO Login
+              MDRRMO / Administrator Login
             </DialogTitle>
             <DialogDescription>
-              Sign in with your MDRRMO account to review, track, and manage barangay BDRRMP
-              submissions.
+              Sign in with your MDRRMO Officer, MDRRMO Staff or System Administrator account to review, track, and
+              manage barangay BDRRMP submissions.
             </DialogDescription>
           </DialogHeader>
 
@@ -1178,7 +1185,7 @@ function AdminLoginDialog({
           <DialogFooter className="flex-col gap-2 sm:flex-col">
             <Button type="submit" disabled={loading} className="w-full gap-2 font-semibold">
               {loading ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
-              {loading ? "Signing in…" : "Sign In as MDRRMO"}
+              {loading ? "Signing in…" : "Sign In to Console"}
             </Button>
             <p className="text-center text-xs text-muted-foreground">
               For MDRRMO Pio Duran personnel only. All actions are logged in the audit trail.

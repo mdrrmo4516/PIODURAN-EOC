@@ -36,7 +36,7 @@ import BarangayWizard from "./barangay-wizard";
 const TABS = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "wizard", label: "My BDRRMP", icon: FileText },
-  { key: "requirements", label: "Requirements", icon: ListChecks },
+  { key: "requirements", label: "References", icon: ListChecks },
   { key: "tutorials", label: "Tutorials", icon: BookOpen },
   { key: "documents", label: "Documents", icon: FolderOpen },
   { key: "comments", label: "Comments", icon: MessageSquare },
@@ -126,7 +126,7 @@ export default function BarangayApp({
     <div className="flex min-h-screen flex-col bg-background">
       {/* Header */}
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4">
+        <div className="flex h-14 w-full items-center gap-3 px-4">
           <div className="flex min-w-0 items-center gap-2.5">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
               <ShieldCheck className="size-5" aria-hidden="true" />
@@ -179,7 +179,7 @@ export default function BarangayApp({
 
         {/* Tab navigation (scrollable) */}
         <nav className="border-t" aria-label="Portal sections">
-          <div className="mx-auto w-full max-w-7xl overflow-x-auto px-2 [scrollbar-width:thin]">
+          <div className="w-full overflow-x-auto px-2 [scrollbar-width:thin]">
             <div className="flex min-w-max gap-1 py-1.5">
               {TABS.map(({ key, label, icon: Icon }) => (
                 <button
@@ -217,7 +217,7 @@ export default function BarangayApp({
 
       {/* Forced PIN change notice */}
       {session.mustChangePin && (
-        <div className="mx-auto w-full max-w-7xl px-4 pt-4">
+        <div className="w-full px-4 pt-4">
           <Alert className="border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-500/50 dark:bg-amber-950/40 dark:text-amber-200">
             <KeyRound />
             <AlertTitle>Change your temporary Access PIN</AlertTitle>
@@ -234,7 +234,7 @@ export default function BarangayApp({
       )}
 
       {/* Main content */}
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
+      <main className="w-full flex-1 px-4 py-6">
         {tab === "dashboard" &&
           (overviewError ? (
             <LoadError title="Failed to load dashboard" message={overviewError} onRetry={loadOverview} />
@@ -277,7 +277,7 @@ export default function BarangayApp({
 
         {tab === "requirements" &&
           (overviewError ? (
-            <LoadError title="Failed to load requirements" message={overviewError} onRetry={loadOverview} />
+            <LoadError title="Failed to load references" message={overviewError} onRetry={loadOverview} />
           ) : !overview ? (
             <DashboardSkeleton />
           ) : (
@@ -301,7 +301,7 @@ export default function BarangayApp({
 
       {/* Footer */}
       <footer className="mt-auto border-t">
-        <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-1 px-4 py-3 text-xs text-muted-foreground">
+        <div className="flex w-full flex-wrap items-center justify-between gap-1 px-4 py-3 text-xs text-muted-foreground">
           <span>QAS33 • MDRRMO Pio Duran</span>
           <span className="hidden sm:block">Barangay DRRM Plan Review, Tracking, Submission &amp; Management System</span>
         </div>

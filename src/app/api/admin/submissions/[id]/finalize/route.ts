@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { db } from "@/lib/db";
-import { requireAdmin, getClientIp } from "@/lib/qas33/auth";
+import { requireAdmin, canApproveBdrrmp, getClientIp } from "@/lib/qas33/auth";
 import { logAudit, notifyBarangay } from "@/lib/qas33/audit";
 import { getSectionDefs } from "@/lib/qas33/template";
 import { parseValues } from "@/lib/qas33/barangay-service";
@@ -10,10 +10,17 @@ import { buildDocId, getSettings, getBaseUrl } from "@/lib/qas33/server";
 import { saveGeneratedDocument } from "@/lib/qas33/storage";
 
 // POST — finalize: apply authorized signature + generate final PDF + unlock download
+// Only the MDRRMO Officer (review & approve role) may sign and finalize BDRRMPs.
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const resolved = await requireAdmin();
   if (!resolved || !resolved.admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canApproveBdrrmp(resolved.admin.role)) {
+    return NextResponse.json(
+      { error: "Only the MDRRMO Officer can sign and finalize the approved BDRRMP." },
+      { status: 403 }
+    );
   }
   const { id } = await ctx.params;
   const submission = await db.submission.findUnique({ where: { id }, include: { barangay: true } });

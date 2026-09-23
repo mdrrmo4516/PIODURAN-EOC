@@ -1,0 +1,562 @@
+     1→// QAS33 seed script — run with: bun scripts/seed.ts
+     2→import { randomBytes, scryptSync, createHash } from "crypto";
+     3→import { promises as fs } from "fs";
+     4→import path from "path";
+     5→import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+     6→import QRCode from "qrcode";
+     7→import { db } from "../src/lib/db";
+     8→import { SECTION_DEFS, TUTORIAL_DEFS, BARANGAYS_OF_PIO_DURAN } from "../src/lib/qas33/template-data";
+     9→import { buildDocId } from "../src/lib/qas33/server";
+    10→
+    11→function hashSecret(secret: string): string {
+    12→  const salt = randomBytes(16).toString("hex");
+    13→  const hash = scryptSync(secret, salt, 64).toString("hex");
+    14→  return `${salt}:${hash}`;
+    15→}
+    16→
+    17→const daysAgo = (d: number, h = 9, m = 0) => {
+    18→  const dt = new Date(Date.now() - d * 86400000);
+    19→  dt.setHours(h, m, 0, 0);
+    20→  return dt;
+    21→};
+    22→
+    23→const STORAGE_ROOT = path.join(process.cwd(), "db", "storage");
+    24→
+    25→async function makePlaceholderPdf(title: string, subtitle: string): Promise<Buffer> {
+    26→  const pdf = await PDFDocument.create();
+    27→  const page = pdf.addPage([595.28, 841.89]);
+    28→  const font = await pdf.embedFont(StandardFonts.Helvetica);
+    29→  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+    30→  page.drawRectangle({ x: 0, y: 741.89, width: 595.28, height: 100, color: rgb(0.055, 0.42, 0.27) });
+    31→  page.drawText("QAS33 — MDRRMO PIO DURAN", { x: 50, y: 800, size: 10, font: bold, color: rgb(1, 1, 1) });
+    32→  page.drawText(title, { x: 50, y: 775, size: 14, font: bold, color: rgb(1, 1, 1) });
+    33→  page.drawText(subtitle, { x: 50, y: 700, size: 11, font, color: rgb(0.2, 0.2, 0.2) });
+    34→  page.drawText("[ Seeded reference document for QAS33 demonstration ]", { x: 50, y: 680, size: 9, font, color: rgb(0.5, 0.5, 0.5) });
+    35→  const bytes = await pdf.save();
+    36→  return Buffer.from(bytes);
+    37→}
+    38→
+    39→function fullValues(brgy: { name: string; captain: string }, i: number): Record<string, unknown> {
+    40→  const pop = 1400 + ((i * 137) % 1800);
+    41→  const hh = Math.round(pop / 4.6);
+    42→  return {
+    43→    barangay_captain: brgy.captain,
+    44→    contact_number: `0917 555 0${String(10 + i).padStart(2, "0")}`,
+    45→    population_total: pop,
+    46→    households_total: hh,
+    47→    puroks_count: 7,
+    48→    land_area: 320 + ((i * 53) % 400),
+    49→    senior_citizens: Math.round(pop * 0.09),
+    50→    pwd_count: Math.round(pop * 0.012),
+    51→    children_below5: Math.round(pop * 0.11),
+    52→    pregnant_women: Math.round(pop * 0.024),
+    53→    major_livelihood: "Farming (rice, coconut) and coastal fishing",
+    54→    hazards_present: ["Typhoon / Bagyo", "Flood / Baha", "Landslide / Pagguho ng lupa", "Earthquake / Lindol"],
+    55→    affected_puroks:
+    56→      "Purok 1, 2, 3 — flooding along the river; Purok 5, 6 — slope areas prone to landslide; Purok 7 (coastal) — storm surge during typhoons",
+    57→    households_at_risk_typhoon: Math.round(hh * 0.85),
+    58→    households_at_risk_flood: Math.round(hh * 0.38),
+    59→    households_at_risk_landslide: Math.round(hh * 0.14),
+    60→    households_at_risk_others: Math.round(hh * 0.05),
+    61→    hazard_history:
+    62→      "Nov 2020 — Typhoon Rolly (Goni): 46 houses damaged, Purok 1–3 flooded for 3 days. Dec 2021 — Typhoon Odette (Rai): coastal purok storm surge, fishing boats lost. Jul 2023 — Habagat monsoon: minor landslide at Purok 5.",
+    63→    vulnerable_groups:
+    64→      "Senior citizens (Purok 2, 4 — far from evacuation center); PWDs (12 in Purok 1, 3); pregnant/lactating women; children below 5; informal settler families along riverbank (Purok 3)",
+    65→    critical_infrastructures:
+    66→      "Barangay hall and health station (Purok 4); elementary school (Purok 5 — also the main evacuation center); spillway bridge (Purok 1–2 access); water level gauge; barangay daycare center",
+    67→    vulnerable_houses: Math.round(hh * 0.22),
+    68→    vulnerability_notes:
+    69→      "Riverbank erosion continues to threaten Purok 3. Power interruption during typhoons isolates coastal Purok 7.",
+    70→    bdrrmc_organized: "Yes / Oo",
+    71→    bdrrmc_trained: "Yes / Oo",
+    72→    early_warning_system: "Combined / Pinagsama",
+    73→    evacuation_centers_count: 2,
+    74→    equipment_available:
+    75→      "15 life vests, 3 ropes (50m), 10 flashlights, 2 first aid kits, 2 megaphones, 1 generator, 20 rescue boots",
+    76→    drrm_budget: 85000,
+    77→    capacity_gaps:
+    78→      "Needs additional water rescue equipment and training; no dedicated ambulance; communication relies on personal cellphones.",
+    79→    risk_typhoon: "High / Mataas",
+    80→    risk_flood: "High / Mataas",
+    81→    risk_landslide: "Moderate / Katamtaman",
+    82→    risk_earthquake: "Moderate / Katamtaman",
+    83→    overall_risk_level: "High / Mataas",
+    84→    risk_summary:
+    85→      "The barangay is highly exposed to typhoon and flooding due to its river system and low-lying puroks. Landslide risk is moderate in upland puroks. Capacity is improving but equipment gaps remain.",
+    86→    bdrrmc_chair: brgy.captain,
+    87→    bdrrmc_vice: "Kagawad Rogelio P. Mendoza",
+    88→    response_team_lead: "Brgy. Tanod Chief Danilo C. Farinas",
+    89→    bdrrmc_meeting_freq: "Monthly / Buwanan",
+    90→    bdrrmc_members:
+    91→      `${brgy.captain} — Chairperson\nKagawad Rogelio P. Mendoza — Vice Chairperson\nSK Chairperson — Youth representative\nBarangay Secretary — Secretariat\nBarangay Treasurer — Finance\nBrgy. Tanod Chief — Response Team\nBHW — Health and Nutrition\nPTA President — Education\nCVO President — Livelihood`,
+    92→    prevention_activities:
+    93→      "Quarterly drainage canal cleaning (all puroks); riverbank planting of bamboos and mangroves; zoning enforcement along danger zones; IEC campaigns on waste management to prevent clogged drainage",
+    94→    prevention_budget: 20000,
+    95→    preparedness_activities:
+    96→      "Quarterly BDRRMC meetings and drills (earthquake, flood); pre-positioning of relief goods before typhoon season; family disaster preparedness orientation per purok; maintenance of early warning equipment",
+    97→    preparedness_budget: 25000,
+    98→    response_activities:
+    99→      "Activation of Barangay Emergency Operations; pre-emptive evacuation of Purok 1–3 and 7; establishment of evacuation center management team; relief distribution; damage assessment and reporting to MDRRMO",
+   100→    response_budget: 20000,
+   101→    rehab_activities:
+   102→      "Cash-for-work debris clearing; repair of damaged houses using local materials; psychosocial support sessions; livelihood assistance for affected fisherfolk and farmers",
+   103→    rehab_budget: 20000,
+   104→    evacuation_sites:
+   105→      "Barangay Elementary School (main — capacity 180 families / 3 classrooms + covered court); Barangay Hall multipurpose building (capacity 60 families)",
+   106→    evacuation_routes:
+   107→      "Purok 1–3: main barangay road to elementary school (500m, passable by tricycle); Purok 4–6: provincial road to barangay hall; Purok 7: coastal road to school (alternate: upland trail during storm surge)",
+   108→    evacuation_procedures:
+   109→      "1) MDRRMO/PAGASA warning received by Punong Barangay; 2) dissemination via text blast, bell and house-to-house; 3) pre-emptive evacuation ordered at PSWS #2 / critical water level; 4) purok leaders lead families to assigned sites; 5) headcount and registration by BDRRMC secretariat; 6) reporting to MDRRMO.",
+   110→    transport_resources: "2 barangay service tricycles, 1 dump truck (upon request from municipal pool), 4 motorbancas for coastal purok",
+   111→    special_needs_protocol:
+   112→      "Purok leaders maintain a masterlist of senior citizens, PWDs and pregnant women; buddy-system assignments; priority evacuation and separate sleeping area at the evacuation center; BHW attends to medical needs.",
+   113→    warning_methods: ["SMS / Text blast", "Barangay bell / Kampana", "House-to-house / Bahay-bahay", "Public address system / Megaphone"],
+   114→    warning_source: "MDRRMO Pio Duran / PAGASA weather advisories",
+   115→    responsible_officials:
+   116→      "Punong Barangay (overall); Barangay Secretary (message relay to purok leaders); purok leaders (house-to-house); SK (social media announcements)",
+   117→    communication_gaps: "No dedicated two-way radio; mountain purok has weak cellular signal.",
+   118→    fund_source: "5% Local DRRM Fund (LDRRMF)",
+   119→    total_bdrrm_fund: 85000,
+   120→    quick_response_fund: 30000,
+   121→    budget_remarks: "Allocated per thematic area: P20k prevention, P25k preparedness, P20k response, P20k rehabilitation. QRF reserved from the general fund.",
+   122→  };
+   123→}
+   124→
+   125→function draftValues(brgy: { name: string; captain: string }, i: number): Record<string, unknown> {
+   126→  const pop = 1400 + ((i * 137) % 1800);
+   127→  return {
+   128→    barangay_captain: brgy.captain,
+   129→    contact_number: `0918 555 0${String(10 + i).padStart(2, "0")}`,
+   130→    population_total: pop,
+   131→    households_total: Math.round(pop / 4.6),
+   132→    puroks_count: 7,
+   133→    senior_citizens: Math.round(pop * 0.09),
+   134→    pwd_count: Math.round(pop * 0.012),
+   135→    children_below5: Math.round(pop * 0.11),
+   136→    pregnant_women: Math.round(pop * 0.024),
+   137→    major_livelihood: "Farming and fishing",
+   138→    hazards_present: ["Typhoon / Bagyo", "Flood / Baha"],
+   139→    affected_puroks: "Purok 1 and 2 — flooding",
+   140→    households_at_risk_typhoon: Math.round(pop / 4.6 * 0.8),
+   141→    households_at_risk_flood: Math.round(pop / 4.6 * 0.3),
+   142→    hazard_history: "2020 Typhoon Rolly — flooded puroks for 2 days.",
+   143→  };
+   144→}
+   145→
+   146→function draftValues2(brgy: { name: string; captain: string }, i: number): Record<string, unknown> {
+   147→  return {
+   148→    ...draftValues(brgy, i),
+   149→    vulnerable_groups: "Senior citizens in Purok 2; families along the creek in Purok 1",
+   150→    critical_infrastructures: "Barangay hall, day care center, spillway",
+   151→    vulnerable_houses: 60,
+   152→    bdrrmc_organized: "Yes / Oo",
+   153→    bdrrmc_trained: "Partially / Bahagya",
+   154→    early_warning_system: "Text blast / Text blast",
+   155→    evacuation_centers_count: 1,
+   156→    equipment_available: "5 life vests, 2 flashlights, 1 first aid kit",
+   157→    drrm_budget: 45000,
+   158→  };
+   159→}
+   160→
+   161→async function writeFile(key: string, buf: Buffer) {
+   162→  const abs = path.join(STORAGE_ROOT, key);
+   163→  await fs.mkdir(path.dirname(abs), { recursive: true });
+   164→  await fs.writeFile(abs, buf);
+   165→}
+   166→
+   167→async function main() {
+   168→  console.log("Seeding QAS33 database...");
+   169→
+   170→  // Wipe (FK-safe order)
+   171→  await db.downloadLog.deleteMany();
+   172→  await db.generatedDocument.deleteMany();
+   173→  await db.rating.deleteMany();
+   174→  await db.reviewComment.deleteMany();
+   175→  await db.review.deleteMany();
+   176→  await db.submissionVersion.deleteMany();
+   177→  await db.submissionFile.deleteMany();
+   178→  await db.submission.deleteMany();
+   179→  await db.notification.deleteMany();
+   180→  await db.auditLog.deleteMany();
+   181→  await db.session.deleteMany();
+   182→  await db.barangayCredential.deleteMany();
+   183→  await db.barangay.deleteMany();
+   184→  await db.adminUser.deleteMany();
+   185→  await db.templateSection.deleteMany();
+   186→  await db.tutorial.deleteMany();
+   187→  await db.ratingCriterion.deleteMany();
+   188→  await db.systemSetting.deleteMany();
+   189→  await fs.rm(path.join(STORAGE_ROOT, "uploads"), { recursive: true, force: true }).catch(() => undefined);
+   190→  await fs.rm(path.join(STORAGE_ROOT, "generated"), { recursive: true, force: true }).catch(() => undefined);
+   191→
+   192→  // Admin users
+   193→  const mdrrmo = await db.adminUser.create({
+   194→    data: {
+   195→      username: "mdrrmo",
+   196→      passwordHash: hashSecret("PioDuran2026!"),
+   197→      name: "Jose R. Salazar",
+   198→      position: "Municipal DRRM Officer",
+   199→      role: "MDRRMO_ADMIN",
+   200→      lastLoginAt: daysAgo(0, 8, 30),
+   201→    },
+   202→  });
+   203→  await db.adminUser.create({
+   204→    data: {
+   205→      username: "sysadmin",
+   206→      passwordHash: hashSecret("SysAdmin2026!"),
+   207→      name: "System Administrator",
+   208→      position: "ICT Administrator",
+   209→      role: "SYSTEM_ADMIN",
+   210→    },
+   211→  });
+   212→
+   213→  // Barangays + credentials
+   214→  const barangays: Array<{ id: string; code: string; name: string }> = [];
+   215→  for (let i = 0; i < BARANGAYS_OF_PIO_DURAN.length; i++) {
+   216→    const b = BARANGAYS_OF_PIO_DURAN[i];
+   217→    const code = `PD-BRG-${String(i + 1).padStart(3, "0")}`;
+   218→    const created = await db.barangay.create({
+   219→      data: {
+   220→        code,
+   221→        name: b.name,
+   222→        captain: b.captain,
+   223→        population: 1400 + ((i * 137) % 1800),
+   224→        households: Math.round((1400 + ((i * 137) % 1800)) / 4.6),
+   225→        puroks: 7,
+   226→        credential: {
+   227→          create: {
+   228→            pinHash: hashSecret(`QAS33-${String(i + 1).padStart(3, "0")}`),
+   229→            mustChangePin: i === 0, // Albasan demonstrates first-time PIN change
+   230→            active: true,
+   231→            lastLoginAt: i < 8 ? daysAgo(1, 10, 15) : null,
+   232→          },
+   233→        },
+   234→      },
+   235→    });
+   236→    barangays.push({ id: created.id, code, name: created.name });
+   237→  }
+   238→
+   239→  // Template sections
+   240→  for (const s of SECTION_DEFS) {
+   241→    await db.templateSection.create({
+   242→      data: {
+   243→        key: s.key,
+   244→        order: s.order,
+   245→        titleEn: s.titleEn,
+   246→        titleTl: s.titleTl,
+   247→        descEn: s.descEn,
+   248→        descTl: s.descTl,
+   249→        icon: s.icon,
+   250→        requiresUpload: s.requiresUpload,
+   251→        uploadLabelEn: s.uploadLabelEn,
+   252→        uploadLabelTl: s.uploadLabelTl,
+   253→        uploadFormats: s.uploadFormats,
+   254→        uploadMaxMB: s.uploadMaxMB,
+   255→        required: s.required,
+   256→        fieldsJson: JSON.stringify(s.fields),
+   257→      },
+   258→    });
+   259→  }
+   260→
+   261→  // Tutorials
+   262→  for (const t of TUTORIAL_DEFS) {
+   263→    await db.tutorial.create({ data: { key: t.key, titleEn: t.titleEn, titleTl: t.titleTl, bodyEn: t.bodyEn, bodyTl: t.bodyTl, order: TUTORIAL_DEFS.indexOf(t) + 1 } });
+   264→  }
+   265→
+   266→  // Rating criteria
+   267→  const criteriaData = [
+   268→    { key: "completeness", name: "Completeness", maxScore: 25, order: 1 },
+   269→    { key: "accuracy", name: "Accuracy", maxScore: 25, order: 2 },
+   270→    { key: "compliance", name: "Compliance", maxScore: 25, order: 3 },
+   271→    { key: "supporting_docs", name: "Supporting Documents", maxScore: 25, order: 4 },
+   272→  ];
+   273→  for (const c of criteriaData) {
+   274→    await db.ratingCriterion.create({ data: c });
+   275→  }
+   276→
+   277→  // Settings
+   278→  const settingsMap: Record<string, string> = {
+   279→    planYear: JSON.stringify(2026),
+   280→    signatoryName: JSON.stringify("Jose R. Salazar"),
+   281→    signatoryPosition: JSON.stringify("Municipal Disaster Risk Reduction and Management Officer"),
+   282→    municipality: JSON.stringify("Pio Duran"),
+   283→    province: JSON.stringify("Albay"),
+   284→    region: JSON.stringify("Bicol Region (Region V)"),
+   285→    motto: JSON.stringify("Faster. Simpler. Transparent."),
+   286→  };
+   287→  for (const [key, value] of Object.entries(settingsMap)) {
+   288→    await db.systemSetting.create({ data: { key, value } });
+   289→  }
+   290→
+   291→  const YEAR = 2026;
+   292→  const getSubmission = async (idx: number) => {
+   293→    const b = barangays[idx];
+   294→    return db.submission.upsert({
+   295→      where: { barangayId_year: { barangayId: b.id, year: YEAR } },
+   296→      create: { barangayId: b.id, year: YEAR },
+   297→      update: {},
+   298→    });
+   299→  };
+   300→
+   301→  const uploadReqFiles = async (
+   302→    submissionId: string,
+   303→    brgyCode: string,
+   304→    brgyName: string,
+   305→    status: string,
+   306→    uploadedAt: Date,
+   307→    version: number
+   308→  ) => {
+   309→    const uploadSections = ["hazard_assessment", "risk_assessment", "bdrrmc_structure", "evacuation_plan"];
+   310→    for (const sk of uploadSections) {
+   311→      const def = SECTION_DEFS.find((s) => s.key === sk)!;
+   312→      const title = def.uploadLabelEn || def.titleEn;
+   313→      const buf = await makePlaceholderPdf(title, `Barangay ${brgyName} — ${title}`);
+   314→      const filename = `${sk}_${brgyCode}.pdf`;
+   315→      const storageKey = path.join("uploads", brgyCode, submissionId, `${randomBytes(6).toString("hex")}-${filename}`);
+   316→      await writeFile(storageKey, buf);
+   317→      await db.submissionFile.create({
+   318→        data: {
+   319→          submissionId,
+   320→          sectionKey: sk,
+   321→          filename,
+   322→          storageKey,
+   323→          mimeType: "application/pdf",
+   324→          size: buf.length,
+   325→          version,
+   326→          status,
+   327→          uploadedBy: `Barangay ${brgyName}`,
+   328→          uploadedAt,
+   329→        },
+   330→      });
+   331→    }
+   332→  };
+   333→
+   334→  const audit = (actorType: string, actorName: string, action: string, detail: string, barangayId?: string, at?: Date) =>
+   335→    db.auditLog.create({
+   336→      data: {
+   337→        actorType: actorName.includes("System") ? "SYSTEM" : (actorType as "BARANGAY" | "ADMIN" | "SYSTEM"),
+   338→        actorName,
+   339→        action,
+   340→        detail,
+   341→        barangayId: barangayId ?? null,
+   342→        ip: "10.0.0." + (Math.floor(Math.random() * 200) + 2),
+   343→        createdAt: at ?? new Date(),
+   344→      },
+   345→    });
+   346→
+   347→  // ============ DEMO SUBMISSIONS ============
+   348→
+   349→  // --- [0] Albasan: DRAFT (Tagalog), partial, 1 file
+   350→  {
+   351→    const sub = await getSubmission(0);
+   352→    const vals = draftValues(BARANGAYS_OF_PIO_DURAN[0], 0);
+   353→    await db.submission.update({
+   354→      where: { id: sub.id },
+   355→      data: { status: "DRAFT", templateLang: "TL", valuesJson: JSON.stringify(vals), progress: 25, version: 0 },
+   356→    });
+   357→    const buf = await makePlaceholderPdf("Purok-Based Hazard Risk Assessment", "Barangay Albasan — draft hazard assessment");
+   358→    const storageKey = path.join("uploads", barangays[0].code, sub.id, `${randomBytes(6).toString("hex")}-hazard_assessment.pdf`);
+   359→    await writeFile(storageKey, buf);
+   360→    await db.submissionFile.create({
+   361→      data: { submissionId: sub.id, sectionKey: "hazard_assessment", filename: "hazard_assessment_PD-BRG-001.pdf", storageKey, mimeType: "application/pdf", size: buf.length, version: 1, status: "PENDING", uploadedBy: "Barangay Albasan", uploadedAt: daysAgo(2, 10, 30) },
+   362→    });
+   363→    await audit("BARANGAY", "Barangay Albasan", "LOGGED_IN", "First-time login — temporary PIN changed", barangays[0].id, daysAgo(3, 9, 0));
+   364→    await audit("BARANGAY", "Barangay Albasan", "TEMPLATE_SELECTED", "Selected Tagalog template", barangays[0].id, daysAgo(3, 9, 5));
+   365→    await audit("BARANGAY", "Barangay Albasan", "UPLOADED_FILE", "Uploaded: hazard_assessment_PD-BRG-001.pdf", barangays[0].id, daysAgo(2, 10, 30));
+   366→  }
+   367→
+   368→  // --- [1] Bacong: SUBMITTED v1 (English), complete
+   369→  {
+   370→    const sub = await getSubmission(1);
+   371→    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[1], 1);
+   372→    const at = daysAgo(4, 14, 12);
+   373→    await db.submission.update({
+   374→      where: { id: sub.id },
+   375→      data: { status: "SUBMITTED", templateLang: "EN", valuesJson: JSON.stringify(vals), progress: 100, version: 1, submittedAt: at },
+   376→    });
+   377→    await uploadReqFiles(sub.id, barangays[1].code, barangays[1].name, "PENDING", daysAgo(4, 13, 40), 1);
+   378→    await db.submissionVersion.create({ data: { submissionId: sub.id, version: 1, valuesJson: JSON.stringify(vals), filesJson: "[]", note: "Initial submission", submittedAt: at } });
+   379→    await db.notification.create({ data: { audience: "ADMIN", type: "SUBMITTED", title: "New submission", body: `Barangay Bacong submitted BDRRMP ${YEAR} (v1) for review.`, link: "submissions", createdAt: at } });
+   380→    await audit("BARANGAY", "Barangay Bacong", "SUBMITTED", `Submitted BDRRMP ${YEAR} version 1`, barangays[1].id, at);
+   381→  }
+   382→
+   383→  // --- [2] Bagumbayan: UNDER_REVIEW v1
+   384→  {
+   385→    const sub = await getSubmission(2);
+   386→    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[2], 2);
+   387→    const at = daysAgo(5, 9, 20);
+   388→    await db.submission.update({
+   389→      where: { id: sub.id },
+   390→      data: { status: "UNDER_REVIEW", templateLang: "EN", valuesJson: JSON.stringify(vals), progress: 100, version: 1, submittedAt: daysAgo(6, 15, 2), underReviewAt: at },
+   391→    });
+   392→    await uploadReqFiles(sub.id, barangays[2].code, barangays[2].name, "PENDING", daysAgo(6, 14, 30), 1);
+   393→    await db.submissionVersion.create({ data: { submissionId: sub.id, version: 1, valuesJson: JSON.stringify(vals), filesJson: "[]", note: "Initial submission", submittedAt: daysAgo(6, 15, 2) } });
+   394→    await db.review.create({ data: { submissionId: sub.id, version: 1, reviewerId: mdrrmo.id, reviewerName: mdrrmo.name, action: "START_REVIEW", createdAt: at } });
+   395→    await audit("BARANGAY", "Barangay Bagumbayan", "SUBMITTED", `Submitted BDRRMP ${YEAR} version 1`, barangays[2].id, daysAgo(6, 15, 2));
+   396→    await audit("ADMIN", mdrrmo.name, "STARTED_REVIEW", "Opened submission for review — Bagumbayan", barangays[2].id, at);
+   397→  }
+   398→
+   399→  // --- [3] Baliana: NEEDS_REVISION v1 with comments
+   400→  {
+   401→    const sub = await getSubmission(3);
+   402→    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[3], 3);
+   403→    const at = daysAgo(1, 16, 45);
+   404→    await db.submission.update({
+   405→      where: { id: sub.id },
+   406→      data: { status: "NEEDS_REVISION", templateLang: "EN", valuesJson: JSON.stringify(vals), progress: 100, version: 1, submittedAt: daysAgo(3, 10, 5), underReviewAt: daysAgo(2, 8, 30) },
+   407→    });
+   408→    await uploadReqFiles(sub.id, barangays[3].code, barangays[3].name, "PENDING", daysAgo(3, 9, 40), 1);
+   409→    await db.submissionVersion.create({ data: { submissionId: sub.id, version: 1, valuesJson: JSON.stringify(vals), filesJson: "[]", note: "Initial submission", submittedAt: daysAgo(3, 10, 5) } });
+   410→    const review = await db.review.create({
+   411→      data: { submissionId: sub.id, version: 1, reviewerId: mdrrmo.id, reviewerName: mdrrmo.name, action: "REVISION_REQUESTED", overallComment: "Please correct the flagged items and resubmit within the week.", createdAt: at },
+   412→    });
+   413→    await db.reviewComment.createMany({
+   414→      data: [
+   415→        { reviewId: review.id, sectionKey: "hazard_assessment", comment: "Please update the number of households affected by flooding — the figure must match your purok-based risk assessment (Purok 1–3).", requiresRevision: true, createdAt: at },
+   416→        { reviewId: review.id, sectionKey: "evacuation_plan", comment: "Specify the alternate route for Purok 7 during storm surge and include the capacity of each evacuation site.", requiresRevision: true, createdAt: at },
+   417→      ],
+   418→    });
+   419→    await db.submissionFile.updateMany({ where: { submissionId: sub.id, sectionKey: { in: ["hazard_assessment", "evacuation_plan"] } }, data: { status: "NEEDS_REVISION" } });
+   420→    await db.notification.create({ data: { barangayId: barangays[3].id, audience: "BARANGAY", type: "REVISION", title: "BDRRMP needs revision", body: "The MDRRMO requested revisions on 2 sections: Hazard Assessment and Evacuation Plan. Please see the comments.", link: "comments", createdAt: at } });
+   421→    await audit("ADMIN", mdrrmo.name, "REVISION_REQUESTED", "Requested revision with 2 section comments — Baliana", barangays[3].id, at);
+   422→  }
+   423→
+   424→  // --- [4] Banawang: NOT_STARTED (template TL selected)
+   425→  {
+   426→    const sub = await getSubmission(4);
+   427→    await db.submission.update({ where: { id: sub.id }, data: { status: "NOT_STARTED", templateLang: "TL", progress: 0 } });
+   428→    await audit("BARANGAY", "Barangay Banawang", "TEMPLATE_SELECTED", "Selected Tagalog template", barangays[4].id, daysAgo(1, 11, 0));
+   429→  }
+   430→
+   431→  // --- [5] Buenavista: READY_FOR_DOWNLOAD (v2 approved, rated, signed, PDF generated)
+   432→  {
+   433→    const sub = await getSubmission(5);
+   434→    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[5], 5);
+   435→    const submittedV1 = daysAgo(9, 10, 0);
+   436→    const reviewV1 = daysAgo(8, 13, 30);
+   437→    const resubmitted = daysAgo(7, 9, 15);
+   438→    const approvedAt = daysAgo(7, 15, 40);
+   439→    const ratedAt = daysAgo(7, 15, 35);
+   440→    const finalizedAt = daysAgo(7, 15, 45);
+   441→    await db.submission.update({
+   442→      where: { id: sub.id },
+   443→      data: { status: "READY_FOR_DOWNLOAD", templateLang: "TL", valuesJson: JSON.stringify(vals), progress: 100, version: 2, submittedAt: submittedV1, resubmittedAt: resubmitted, underReviewAt: daysAgo(8, 13, 0), approvedAt, finalizedAt: finalizedAt },
+   444→    });
+   445→    await uploadReqFiles(sub.id, barangays[5].code, barangays[5].name, "APPROVED", submittedV1, 1);
+   446→    await db.submissionVersion.create({ data: { submissionId: sub.id, version: 1, valuesJson: JSON.stringify({ ...vals, risk_summary: "draft summary" }), filesJson: "[]", note: "Initial submission", submittedAt: submittedV1 } });
+   447→    await db.submissionVersion.create({ data: { submissionId: sub.id, version: 2, valuesJson: JSON.stringify(vals), filesJson: "[]", note: "Revised per MDRRMO comments", submittedAt: resubmitted } });
+   448→    const review1 = await db.review.create({
+   449→      data: { submissionId: sub.id, version: 1, reviewerId: mdrrmo.id, reviewerName: mdrrmo.name, action: "REVISION_REQUESTED", overallComment: "Good initial submission. Please refine the risk summary and complete the rehabilitation activities.", createdAt: reviewV1 },
+   450→    });
+   451→    await db.reviewComment.create({ data: { reviewId: review1.id, sectionKey: "risk_assessment", comment: "Please elaborate the risk summary — include the basis for the overall risk level.", requiresRevision: true, createdAt: reviewV1 } });
+   452→    const review2 = await db.review.create({
+   453→      data: { submissionId: sub.id, version: 2, reviewerId: mdrrmo.id, reviewerName: mdrrmo.name, action: "APPROVED", overallComment: "Complete, accurate and compliant. Well done!", createdAt: approvedAt },
+   454→    });
+   455→    await db.reviewComment.create({ data: { reviewId: review2.id, sectionKey: "hazard_assessment", comment: "Hazard data is consistent with the purok-based assessment. Approved.", requiresRevision: false, createdAt: approvedAt } });
+   456→    await db.rating.create({
+   457→      data: {
+   458→        submissionId: sub.id,
+   459→        scoresJson: JSON.stringify({ completeness: 25, accuracy: 22, compliance: 25, supporting_docs: 20 }),
+   460→        total: 92,
+   461→        remarks: "Excellent plan. Strengthen the supporting documents (geo-hazard map) next cycle.",
+   462→        ratedBy: mdrrmo.id,
+   463→        ratedByName: mdrrmo.name,
+   464→        createdAt: ratedAt,
+   465→      },
+   466→    });
+   467→    // Generate final document
+   468→    const docId = buildDocId(barangays[5].code, YEAR, 2);
+   469→    const { generateBdrrmpPdf } = await import("../src/lib/qas33/pdf");
+   470→    const signatureHash = createHash("sha256").update(`${docId}|${barangays[5].id}|${mdrrmo.name}|${finalizedAt.toISOString()}`).digest("hex");
+   471→    const pdfBuf = await generateBdrrmpPdf({
+   472→      barangay: { name: barangays[5].name, code: barangays[5].code },
+   473→      submission: { year: YEAR, version: 2, lang: "TL", values: vals },
+   474→      sections: SECTION_DEFS,
+   475→      docId,
+   476→      rating: { total: 92, maxTotal: 100, remarks: "Excellent plan. Strengthen the supporting documents (geo-hazard map) next cycle." },
+   477→      signature: { signedBy: mdrrmo.name, position: "Municipal Disaster Risk Reduction and Management Officer", signedAt: finalizedAt, signatureHash },
+   478→      settings: { municipality: "Pio Duran", province: "Albay" },
+   479→      verifyUrl: `https://qas33.pioduran.gov.ph/?verify=${docId}`,
+   480→      approvedAt,
+   481→    });
+   482→    const docKey = path.join("generated", `${docId}.pdf`);
+   483→    await writeFile(docKey, pdfBuf);
+   484→    await db.generatedDocument.create({
+   485→      data: { submissionId: sub.id, docId, version: 2, fileKey: docKey, lang: "TL", signed: true, signedBy: mdrrmo.name, signedAt: finalizedAt, signatureHash, generatedAt: finalizedAt },
+   486→    });
+   487→    await db.notification.create({ data: { barangayId: barangays[5].id, audience: "BARANGAY", type: "FINALIZED", title: "Final BDRRMP ready for download", body: `Your BDRRMP ${YEAR} was approved and signed. Document ID: ${docId}. You may now download the final PDF.`, link: "documents", createdAt: finalizedAt } });
+   488→    await audit("BARANGAY", "Barangay Buenavista", "SUBMITTED", `Submitted BDRRMP ${YEAR} version 1`, barangays[5].id, submittedV1);
+   489→    await audit("ADMIN", mdrrmo.name, "REVISION_REQUESTED", "Requested revision on Risk Assessment — Buenavista", barangays[5].id, reviewV1);
+   490→    await audit("BARANGAY", "Barangay Buenavista", "RESUBMITTED", `Resubmitted BDRRMP ${YEAR} version 2`, barangays[5].id, resubmitted);
+   491→    await audit("ADMIN", mdrrmo.name, "RATED", "Evaluation saved: 92/100 — Buenavista", barangays[5].id, ratedAt);
+   492→    await audit("ADMIN", mdrrmo.name, "APPROVED", `Approved BDRRMP ${YEAR} v2 — Buenavista`, barangays[5].id, approvedAt);
+   493→    await audit("SYSTEM", "System", "FINALIZED", `Generated final document ${docId} with authorized signature`, barangays[5].id, finalizedAt);
+   494→    console.log(`  Generated sample final document: ${docId} (${pdfBuf.length} bytes)`);
+   495→  }
+   496→
+   497→  // --- [6] Caratagan: RESUBMITTED v2
+   498→  {
+   499→    const sub = await getSubmission(6);
+   500→    const vals = fullValues(BARANGAYS_OF_PIO_DURAN[6], 6);
+   501→    const submittedV1 = daysAgo(8, 11, 0);
+   502→    const reviewV1 = daysAgo(7, 14, 20);
+   503→    const resubmitted = daysAgo(0, 8, 50);
+   504→    await db.submission.update({
+   505→      where: { id: sub.id },
+   506→      data: { status: "RESUBMITTED", templateLang: "EN", valuesJson: JSON.stringify(vals), progress: 100, version: 2, submittedAt: submittedV1, resubmittedAt: resubmitted, underReviewAt: daysAgo(7, 14, 0) },
+   507→    });
+   508→    await uploadReqFiles(sub.id, barangays[6].code, barangays[6].name, "PENDING", submittedV1, 1);
+   509→    const hazardFile = await db.submissionFile.findFirst({ where: { submissionId: sub.id, sectionKey: "hazard_assessment" } });
+   510→    if (hazardFile) {
+   511→      const buf = await makePlaceholderPdf("Purok-Based Hazard Risk Assessment (Revised)", "Barangay Caratagan — corrected household figures");
+   512→      const storageKey = path.join("uploads", barangays[6].code, sub.id, `${randomBytes(6).toString("hex")}-hazard_assessment_revised.pdf`);
+   513→      await writeFile(storageKey, buf);
+   514→      await db.submissionFile.create({ data: { submissionId: sub.id, sectionKey: "hazard_assessment", filename: "hazard_assessment_revised.pdf", storageKey, mimeType: "application/pdf", size: buf.length, version: 2, status: "PENDING", uploadedBy: "Barangay Caratagan", uploadedAt: resubmitted } });
+   515→    }
+   516→    await db.submissionVersion.create({ data: { submissionId: sub.id, version: 1, valuesJson: JSON.stringify({ ...vals, vulnerable_houses: 40 }), filesJson: "[]", note: "Initial submission", submittedAt: submittedV1 } });
+   517→    await db.submissionVersion.create({ data: { submissionId: sub.id, version: 2, valuesJson: JSON.stringify(vals), filesJson: "[]", note: "Revised per MDRRMO comments", submittedAt: resubmitted } });
+   518→    const review1 = await db.review.create({
+   519→      data: { submissionId: sub.id, version: 1, reviewerId: mdrrmo.id, reviewerName: mdrrmo.name, action: "REVISION_REQUESTED", overallComment: "Update vulnerable house count and revise the hazard assessment.", createdAt: reviewV1 },
+   520→    });
+   521→    await db.reviewComment.create({ data: { reviewId: review1.id, sectionKey: "vulnerability_assessment", comment: "Number of houses made of light materials appears underestimated based on your latest census. Please verify.", requiresRevision: true, createdAt: reviewV1 } });
+   522→    await db.notification.create({ data: { barangayId: barangays[6].id, audience: "BARANGAY", type: "REVISION", title: "BDRRMP needs revision", body: "The MDRRMO requested a revision on Vulnerability Assessment. Please see the comment and resubmit.", link: "comments", createdAt: reviewV1 } });
+   523→    await db.notification.create({ data: { audience: "ADMIN", type: "SUBMITTED", title: "Resubmission received", body: `Barangay Caratagan resubmitted BDRRMP ${YEAR} (v2) for re-review.`, link: "submissions", createdAt: resubmitted } });
+   524→    await audit("BARANGAY", "Barangay Caratagan", "RESUBMITTED", `Resubmitted BDRRMP ${YEAR} version 2`, barangays[6].id, resubmitted);
+   525→  }
+   526→
+   527→  // --- [7] Cuyaoyao: DRAFT ~55% (English)
+   528→  {
+   529→    const sub = await getSubmission(7);
+   530→    const vals = draftValues2(BARANGAYS_OF_PIO_DURAN[7], 7);
+   531→    await db.submission.update({
+   532→      where: { id: sub.id },
+   533→      data: { status: "DRAFT", templateLang: "EN", valuesJson: JSON.stringify(vals), progress: 36, version: 0 },
+   534→    });
+   535→    const buf = await makePlaceholderPdf("Barangay Risk Map", "Barangay Cuyaoyao — initial risk map");
+   536→    const storageKey = path.join("uploads", barangays[7].code, sub.id, `${randomBytes(6).toString("hex")}-risk_map.pdf`);
+   537→    await writeFile(storageKey, buf);
+   538→    await db.submissionFile.create({ data: { submissionId: sub.id, sectionKey: "risk_assessment", filename: "risk_map_PD-BRG-008.pdf", storageKey, mimeType: "application/pdf", size: buf.length, version: 1, status: "PENDING", uploadedBy: "Barangay Cuyaoyao", uploadedAt: daysAgo(1, 13, 22) } });
+   539→    await audit("BARANGAY", "Barangay Cuyaoyao", "SAVED_DRAFT", "Saved draft BDRRMP (36% complete)", barangays[7].id, daysAgo(1, 13, 25));
+   540→  }
+   541→
+   542→  // --- Remaining 25: NOT_STARTED
+   543→  for (let i = 8; i < barangays.length; i++) {
+   544→    await getSubmission(i);
+   545→  }
+   546→
+   547→  // Admin overview notifications
+   548→  await db.notification.create({ data: { audience: "ADMIN", type: "SYSTEM", title: "Welcome to QAS33", body: `BDRRMP ${YEAR} cycle is open. 33 barangays are onboarded and credentials have been issued.`, createdAt: daysAgo(14, 8, 0) } });
+   549→
+   550→  const count = await db.barangay.count();
+   551→  console.log(`Seed complete: ${count} barangays, ${await db.submission.count()} submissions, ${await db.auditLog.count()} audit entries.`);
+   552→  console.log("Barangay login demo: PD-BRG-006 / QAS33-006 (Buenavista — final doc ready)");
+   553→  console.log("Admin login demo: mdrrmo / PioDuran2026!");
+   554→}
+   555→
+   556→main()
+   557→  .catch((e) => {
+   558→    console.error(e);
+   559→    process.exit(1);
+   560→  })
+   561→  .finally(() => db.$disconnect());
+   562→

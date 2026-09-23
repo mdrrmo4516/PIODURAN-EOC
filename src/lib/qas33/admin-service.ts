@@ -133,6 +133,7 @@ export async function listBarangayRows(search: string, statusFilter: string, yea
     include: {
       credential: true,
       submissions: { where: { year }, orderBy: { updatedAt: "desc" }, take: 1 },
+      officials: { where: { active: true }, orderBy: { order: "asc" } },
     },
     orderBy: { code: "asc" },
   });
@@ -148,6 +149,7 @@ export async function listBarangayRows(search: string, statusFilter: string, yea
       name: b.name,
       captain: b.captain,
       active: b.active,
+      officials: b.officials.map((o) => ({ id: o.id, name: o.name, position: o.position, committee: o.committee })),
       credential: b.credential
         ? {
             active: b.credential.active,

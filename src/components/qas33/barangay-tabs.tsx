@@ -1,6 +1,6 @@
 "use client";
 
-// QAS33 Barangay Portal — Dashboard, Requirements, Tutorials tabs
+// QAS33 Barangay Portal — Dashboard, References, Tutorials tabs
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -15,6 +15,7 @@ import {
   ListChecks,
   MessageSquare,
   RefreshCw,
+  Users,
   X,
 } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -25,7 +26,13 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { api, formatDate, formatDateTime } from "@/lib/qas33/api";
-import type { BarangayOverview, NotificationItem, SubmissionStatus } from "@/lib/qas33/types";
+import {
+  OFFICIAL_POSITION_META,
+  type BarangayOverview,
+  type NotificationItem,
+  type OfficialItem,
+  type SubmissionStatus,
+} from "@/lib/qas33/types";
 import {
   EmptyState,
   FileStatusBadge,
@@ -58,12 +65,16 @@ export function DashboardTab({
   onOpenTab: (tab: string) => void;
   onRefresh: () => void;
 }) {
-  const { barangay, submission, counts, requirements, latestComments, document } = overview;
+  const { barangay, submission, counts, requirements, latestComments, document, officials } = overview;
   const t: Translate = (en, tl) => (lang === "TL" ? tl : en);
   const finalReady = submission.status === "READY_FOR_DOWNLOAD" || submission.status === "DOWNLOADED";
   const requiredUploads = requirements.filter((r) => r.required && r.requiresUpload).length;
   const unread = notifications.filter((n) => !n.read).slice(0, 5);
   const sectionTitle = (key: string) => requirements.find((r) => r.sectionKey === key)?.title ?? key;
+  // Council officials: PB first, then Kagawads (in ballot order), SK, Secretary, Treasurer
+  const councilOfficials = [...(officials ?? [])].sort(
+    (a, b) => (OFFICIAL_POSITION_META[a.position]?.order ?? 99) - (OFFICIAL_POSITION_META[b.position]?.order ?? 99)
+  );
 
   return (
     <div className="space-y-6">
@@ -123,7 +134,7 @@ export function DashboardTab({
               </Button>
               <Button variant="outline" size="sm" onClick={() => onOpenTab("requirements")}>
                 <ListChecks className="size-4" aria-hidden="true" />
-                {t("View Requirements", "Tingnan ang mga Kailangan")}
+                {t("View References", "Tingnan ang mga Kailangan")}
               </Button>
             </div>
           )}
@@ -144,7 +155,7 @@ export function DashboardTab({
         </Card>
         <Card>
           <CardContent className="p-5">
-            <p className="text-sm font-medium text-muted-foreground">{t("Requirements", "Mga Kailangan")}</p>
+            <p className="text-sm font-medium text-muted-foreground">{t("References", "Mga Kailangan")}</p>
             <p className="mt-1 text-3xl font-bold tabular-nums">
               {counts.completedSections}
               <span className="text-lg font-normal text-muted-foreground"> / {counts.totalSections}</span>
@@ -172,13 +183,13 @@ export function DashboardTab({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Requirements checklist */}
+        {/* References checklist */}
         <Card>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between gap-2">
               <CardTitle className="flex items-center gap-2 text-base">
                 <ListChecks className="size-4 text-primary" aria-hidden="true" />
-                {t("Requirements Checklist", "Talaan ng mga Kailangan")}
+                {t("References Checklist", "Talaan ng mga Kailangan")}
               </CardTitle>
               <Button variant="ghost" size="sm" onClick={() => onOpenTab("requirements")}>
                 {t("View all", "Tingnan lahat")}
@@ -232,6 +243,51 @@ export function DashboardTab({
         </Card>
 
         <div className="space-y-4">
+          {/* Sangguniang Barangay / Barangay Council */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Users className="size-4 text-primary" aria-hidden="true" />
+                {t("Barangay Council", "Sangguniang Barangay")}
+              </CardTitle>
+              <CardDescription>
+                {t(
+                  `Sangguniang Barangay officials of Barangay ${barangay.name}`,
+                  `Mga opisyal ng Sangguniang Barangay ng ${barangay.name}`
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {councilOfficials.length === 0 ? (
+                <EmptyState
+                  icon={Users}
+                  title={t("No council officials on record", "Walang naitalang opisyal")}
+                  description={t(
+                    "Council officials will appear here once encoded by the MDRRMO.",
+                    "Lalabas dito ang mga opisyal kapag na-encode ng MDRRMO."
+                  )}
+                />
+              ) : (
+                <ul className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+                  {councilOfficials.map((o: OfficialItem) => {
+                    const isPb = o.position === "PUNONG_BARANGAY";
+                    return (
+                      <li key={o.id} className={cn("rounded-lg border p-3", isPb && "border-primary/40 bg-primary/5")}>
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                          <p className={cn("text-sm", isPb ? "font-semibold" : "font-medium")}>{o.name}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {OFFICIAL_POSITION_META[o.position]?.label ?? o.position.replace(/_/g, " ")}
+                          </p>
+                        </div>
+                        {o.committee && <p className="mt-0.5 text-xs text-muted-foreground">{o.committee}</p>}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+
           {/* MDRRMO comments */}
           {latestComments.length > 0 && (
             <Card>
@@ -323,7 +379,7 @@ export function DashboardTab({
 }
 
 // ---------------------------------------------------------------------------
-// Requirements tab
+// References tab
 // ---------------------------------------------------------------------------
 
 export function RequirementsTab({
@@ -341,7 +397,7 @@ export function RequirementsTab({
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-bold tracking-tight">{t("Requirements", "Mga Kailangan")}</h1>
+        <h1 className="text-xl font-bold tracking-tight">{t("References", "Mga Kailangan")}</h1>
         <p className="text-sm text-muted-foreground">
           {t(
             "Complete every required section and upload before submitting your BDRRMP.",

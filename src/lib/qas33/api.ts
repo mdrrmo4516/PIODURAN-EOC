@@ -238,6 +238,77 @@ export const api = {
   adminUpdateRequirement: (payload: Record<string, unknown>) =>
     request<{ ok: boolean }>("/api/admin/requirements", { method: "PUT", body: JSON.stringify(payload) }),
 
+  // ---- admin: user management (SYSTEM_ADMIN only) ----
+  adminUsers: () =>
+    request<{
+      users: Array<{
+        id: string;
+        username: string;
+        name: string;
+        position: string | null;
+        role: string;
+        active: boolean;
+        lastLoginAt: string | null;
+        createdAt: string;
+      }>;
+    }>("/api/admin/users"),
+  adminCreateUser: (payload: { username: string; name: string; position?: string; password: string; role: string }) =>
+    request<{ ok: boolean; user: { id: string; username: string; name: string } }>("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  adminUpdateUser: (
+    id: string,
+    payload: { name?: string; position?: string; role?: string; active?: boolean; password?: string }
+  ) =>
+    request<{ ok: boolean; message?: string }>(`/api/admin/users/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+  adminDeleteUser: (id: string) =>
+    request<{ ok: boolean }>(`/api/admin/users/${id}`, { method: "DELETE" }),
+
+  // ---- admin: database management (SYSTEM_ADMIN only) ----
+  adminDatabaseTables: () =>
+    request<{
+      tables: Array<{
+        key: string;
+        label: string;
+        group: string;
+        desc: string;
+        count: number;
+        idField: string;
+        orderBy: { field: string; dir: "asc" | "desc" };
+        searchFields: string[];
+        fields: Array<{
+          name: string;
+          label: string;
+          type: "string" | "number" | "boolean" | "datetime" | "json";
+          required?: boolean;
+          nullable?: boolean;
+          readonly?: boolean;
+          fk?: string;
+          help?: string;
+        }>;
+      }>;
+    }>("/api/admin/database"),
+  adminDatabaseRows: (table: string, page = 1, pageSize = 25, search = "") =>
+    request<{ rows: Array<Record<string, unknown>>; total: number; page: number; pageSize: number }>(
+      `/api/admin/database/${table}?page=${page}&pageSize=${pageSize}&search=${encodeURIComponent(search)}`
+    ),
+  adminDatabaseCreate: (table: string, data: Record<string, unknown>) =>
+    request<{ ok: boolean; row: Record<string, unknown> }>(`/api/admin/database/${table}`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  adminDatabaseUpdate: (table: string, id: string, data: Record<string, unknown>) =>
+    request<{ ok: boolean; row: Record<string, unknown> }>(`/api/admin/database/${table}/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  adminDatabaseDelete: (table: string, id: string) =>
+    request<{ ok: boolean }>(`/api/admin/database/${table}/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
   // ---- public ----
   verify: (docId: string) =>
     request<{

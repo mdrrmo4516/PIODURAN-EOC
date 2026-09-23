@@ -2,7 +2,7 @@
 
 // MDRRMO Console — Tutorials management (bilingual help articles)
 import { useState } from "react";
-import { BookOpen, Pencil } from "lucide-react";
+import { BookOpen, Lock, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -20,12 +20,46 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/qas33/api";
+import { isSystemAdmin, type SessionInfo } from "@/lib/qas33/types";
 import { ErrorAlert, useLoad } from "./mdrrmo-shared";
 
 type TutorialsData = Awaited<ReturnType<typeof api.adminTutorials>>;
 type TutorialRow = TutorialsData["tutorials"][number];
 
-export default function MdrrmoTutorials() {
+export default function MdrrmoTutorials({ session }: { session: SessionInfo }) {
+  // Tutorial management (listing + editing) is reserved for the System Administrator;
+  // other console roles get an explanatory read-only view (the admin API is role-gated).
+  if (!isSystemAdmin(session.admin?.role)) return <TutorialsReadonly />;
+  return <TutorialsManager />;
+}
+
+function TutorialsReadonly() {
+  return (
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-xl font-semibold tracking-tight">Tutorials</h1>
+        <p className="text-sm text-muted-foreground">
+          Help articles shown to barangays in the portal — bilingual (English / Tagalog)
+        </p>
+      </header>
+      <p className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+        <Lock className="h-4 w-4 shrink-0" aria-hidden="true" />
+        Tutorial content is managed by the System Administrator.
+      </p>
+      <Card>
+        <CardContent className="flex items-start gap-3 p-6 text-sm text-muted-foreground">
+          <BookOpen className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden="true" />
+          <span>
+            Help articles are written and maintained by the System Administrator. Barangays can read them anytime from the Tutorials tab of
+            their portal.
+          </span>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+function TutorialsManager() {
   const { toast } = useToast();
   const { data, loading, error, reload } = useLoad<TutorialsData>(() => api.adminTutorials());
   const [busy, setBusy] = useState(false);

@@ -15,7 +15,7 @@ model AdminUser {
   passwordHash String
   name         String
   position     String?
-  role         String    @default("MDRRMO_ADMIN") // MDRRMO_ADMIN | SYSTEM_ADMIN
+  role         String    @default("MDRRMO_OFFICER") // SYSTEM_ADMIN | MDRRMO_OFFICER | MDRRMO_STAFF
   active       Boolean   @default(true)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
@@ -39,6 +39,21 @@ model Barangay {
   credential BarangayCredential?
   submissions Submission[]
   auditLogs  AuditLog[]
+  officials  BarangayOfficial[]
+}
+
+// Sangguniang Barangay members (council) per barangay
+model BarangayOfficial {
+  id         String   @id @default(cuid())
+  barangayId String
+  barangay   Barangay @relation(fields: [barangayId], references: [id], onDelete: Cascade)
+  name       String
+  position   String // PUNONG_BARANGAY | KAGAWAD | SK_CHAIRPERSON | SECRETARY | TREASURER
+  committee  String? // committee chairmanship (kagawads)
+  order      Int      @default(0)
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model BarangayCredential {

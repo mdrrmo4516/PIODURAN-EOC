@@ -1,0 +1,689 @@
+     1→// QAS33 — Database Management registry & generic CRUD service (SYSTEM_ADMIN only)
+     2→// Provides table metadata (labels, field types) plus safe, audit-logged CRUD
+     3→// used by /api/admin/database*. All operations go through the Prisma client.
+     4→import { db } from "@/lib/db";
+     5→import { logAudit } from "@/lib/qas33/audit";
+     6→
+     7→export type DbFieldType = "string" | "number" | "boolean" | "datetime" | "json";
+     8→
+     9→export interface DbFieldDef {
+    10→  name: string; // Prisma field name
+    11→  label: string; // UI label
+    12→  type: DbFieldType;
+    13→  required?: boolean; // required when creating a row
+    14→  nullable?: boolean; // accepts empty -> null
+    15→  readonly?: boolean; // id / createdAt / updatedAt (shown but not editable)
+    16→  fk?: string; // referenced table key for a nicer picker hint
+    17→  help?: string;
+    18→}
+    19→
+    20→export interface DbTableDef {
+    21→  key: string; // URL key, e.g. "barangays"
+    22→  model: string; // Prisma delegate name, e.g. "barangay"
+    23→  label: string;
+    24→  group: "People & Access" | "Barangay Data" | "Plans & Reviews" | "Documents" | "System";
+    25→  desc: string;
+    26→  idField: string; // "id" (or "key" for system_settings)
+    27→  orderBy: { field: string; dir: "asc" | "desc" };
+    28→  searchFields: string[];
+    29→  fields: DbFieldDef[];
+    30→}
+    31→
+    32→const idField = (label = "ID"): DbFieldDef => ({ name: "id", label, type: "string", readonly: true, help: "Auto-generated (cuid)" });
+    33→const createdAtField: DbFieldDef = { name: "createdAt", label: "Created At", type: "datetime", readonly: true };
+    34→const updatedAtField: DbFieldDef = { name: "updatedAt", label: "Updated At", type: "datetime", readonly: true };
+    35→
+    36→export const DB_TABLES: DbTableDef[] = [
+    37→  {
+    38→    key: "admin_users",
+    39→    model: "adminUser",
+    40→    label: "Admin Users",
+    41→    group: "People & Access",
+    42→    desc: "Console accounts — MDRRMO Officer, MDRRMO Staff and System Administrators.",
+    43→    idField: "id",
+    44→    orderBy: { field: "createdAt", dir: "asc" },
+    45→    searchFields: ["username", "name", "position", "role"],
+    46→    fields: [
+    47→      idField(),
+    48→      { name: "username", label: "Username", type: "string", required: true },
+    49→      { name: "passwordHash", label: "Password Hash", type: "string", required: true, help: "scrypt hash — normally managed via the Users module" },
+    50→      { name: "name", label: "Full Name", type: "string", required: true },
+    51→      { name: "position", label: "Position", type: "string", nullable: true },
+    52→      { name: "role", label: "Role", type: "string", required: true, help: "SYSTEM_ADMIN | MDRRMO_OFFICER | MDRRMO_STAFF" },
+    53→      { name: "active", label: "Active", type: "boolean" },
+    54→      { name: "lastLoginAt", label: "Last Login", type: "datetime", nullable: true },
+    55→      createdAtField,
+    56→      updatedAtField,
+    57→    ],
+    58→  },
+    59→  {
+    60→    key: "barangays",
+    61→    model: "barangay",
+    62→    label: "Barangays",
+    63→    group: "Barangay Data",
+    64→    desc: "The 33 barangays of Pio Duran with profile data.",
+    65→    idField: "id",
+    66→    orderBy: { field: "code", dir: "asc" },
+    67→    searchFields: ["code", "name", "captain"],
+    68→    fields: [
+    69→      idField(),
+    70→      { name: "code", label: "Code", type: "string", required: true, help: "e.g. PD-BRG-001" },
+    71→      { name: "name", label: "Barangay Name", type: "string", required: true },
+    72→      { name: "captain", label: "Punong Barangay", type: "string", nullable: true },
+    73→      { name: "population", label: "Population", type: "number", nullable: true },
+    74→      { name: "households", label: "Households", type: "number", nullable: true },
+    75→      { name: "puroks", label: "Puroks", type: "number", nullable: true },
+    76→      { name: "landArea", label: "Land Area (ha)", type: "number", nullable: true },
+    77→      { name: "active", label: "Active", type: "boolean" },
+    78→      createdAtField,
+    79→      updatedAtField,
+    80→    ],
+    81→  },
+    82→  {
+    83→    key: "barangay_officials",
+    84→    model: "barangayOfficial",
+    85→    label: "Barangay Officials",
+    86→    group: "Barangay Data",
+    87→    desc: "Sangguniang Barangay council members for each barangay.",
+    88→    idField: "id",
+    89→    orderBy: { field: "order", dir: "asc" },
+    90→    searchFields: ["name", "position", "committee"],
+    91→    fields: [
+    92→      idField(),
+    93→      { name: "barangayId", label: "Barangay", type: "string", required: true, fk: "barangays" },
+    94→      { name: "name", label: "Official Name", type: "string", required: true },
+    95→      { name: "position", label: "Position", type: "string", required: true, help: "PUNONG_BARANGAY | KAGAWAD | SK_CHAIRPERSON | SECRETARY | TREASURER" },
+    96→      { name: "committee", label: "Committee", type: "string", nullable: true },
+    97→      { name: "order", label: "Order", type: "number" },
+    98→      { name: "active", label: "Active", type: "boolean" },
+    99→      createdAtField,
+   100→      updatedAtField,
+   101→    ],
+   102→  },
+   103→  {
+   104→    key: "barangay_credentials",
+   105→    model: "barangayCredential",
+   106→    label: "Barangay Credentials",
+   107→    group: "People & Access",
+   108→    desc: "Barangay login PINs (hashed), lockout and first-login state.",
+   109→    idField: "id",
+   110→    orderBy: { field: "createdAt", dir: "asc" },
+   111→    searchFields: ["tempPin", "lastLoginIp"],
+   112→    fields: [
+   113→      idField(),
+   114→      { name: "barangayId", label: "Barangay", type: "string", required: true, fk: "barangays" },
+   115→      { name: "pinHash", label: "PIN Hash", type: "string", required: true },
+   116→      { name: "tempPin", label: "Temp PIN", type: "string", nullable: true },
+   117→      { name: "mustChangePin", label: "Must Change PIN", type: "boolean" },
+   118→      { name: "active", label: "Active", type: "boolean" },
+   119→      { name: "failedAttempts", label: "Failed Attempts", type: "number" },
+   120→      { name: "lockedUntil", label: "Locked Until", type: "datetime", nullable: true },
+   121→      { name: "lastLoginAt", label: "Last Login", type: "datetime", nullable: true },
+   122→      { name: "lastLoginIp", label: "Last Login IP", type: "string", nullable: true },
+   123→      createdAtField,
+   124→      updatedAtField,
+   125→    ],
+   126→  },
+   127→  {
+   128→    key: "sessions",
+   129→    model: "session",
+   130→    label: "Sessions",
+   131→    group: "People & Access",
+   132→    desc: "Active login sessions. Deleting a row forces that user to sign in again.",
+   133→    idField: "id",
+   134→    orderBy: { field: "createdAt", dir: "desc" },
+   135→    searchFields: ["token", "role", "ip", "userAgent"],
+   136→    fields: [
+   137→      idField(),
+   138→      { name: "token", label: "Token", type: "string", required: true },
+   139→      { name: "role", label: "Role", type: "string", required: true, help: "BARANGAY | ADMIN" },
+   140→      { name: "barangayId", label: "Barangay ID", type: "string", nullable: true, fk: "barangays" },
+   141→      { name: "adminId", label: "Admin ID", type: "string", nullable: true, fk: "admin_users" },
+   142→      { name: "ip", label: "IP", type: "string", nullable: true },
+   143→      { name: "userAgent", label: "User Agent", type: "string", nullable: true },
+   144→      { name: "expiresAt", label: "Expires At", type: "datetime", required: true },
+   145→      createdAtField,
+   146→    ],
+   147→  },
+   148→  {
+   149→    key: "template_sections",
+   150→    model: "templateSection",
+   151→    label: "Template Sections",
+   152→    group: "System",
+   153→    desc: "BDRRMP plan sections (References) shown to barangays in both languages.",
+   154→    idField: "id",
+   155→    orderBy: { field: "order", dir: "asc" },
+   156→    searchFields: ["key", "titleEn", "titleTl"],
+   157→    fields: [
+   158→      idField(),
+   159→      { name: "key", label: "Key", type: "string", required: true, help: "e.g. hazard_assessment" },
+   160→      { name: "order", label: "Order", type: "number" },
+   161→      { name: "titleEn", label: "Title (EN)", type: "string", required: true },
+   162→      { name: "titleTl", label: "Title (TL)", type: "string", required: true },
+   163→      { name: "descEn", label: "Description (EN)", type: "string", nullable: true },
+   164→      { name: "descTl", label: "Description (TL)", type: "string", nullable: true },
+   165→      { name: "icon", label: "Icon", type: "string", nullable: true },
+   166→      { name: "requiresUpload", label: "Requires Upload", type: "boolean" },
+   167→      { name: "uploadLabelEn", label: "Upload Label (EN)", type: "string", nullable: true },
+   168→      { name: "uploadLabelTl", label: "Upload Label (TL)", type: "string", nullable: true },
+   169→      { name: "uploadFormats", label: "Upload Formats", type: "string" },
+   170→      { name: "uploadMaxMB", label: "Upload Max (MB)", type: "number" },
+   171→      { name: "required", label: "Required", type: "boolean" },
+   172→      { name: "active", label: "Active", type: "boolean" },
+   173→      { name: "fieldsJson", label: "Fields (JSON)", type: "json" },
+   174→      createdAtField,
+   175→      updatedAtField,
+   176→    ],
+   177→  },
+   178→  {
+   179→    key: "submissions",
+   180→    model: "submission",
+   181→    label: "Submissions",
+   182→    group: "Plans & Reviews",
+   183→    desc: "One BDRRMP submission per barangay per year with its status.",
+   184→    idField: "id",
+   185→    orderBy: { field: "updatedAt", dir: "desc" },
+   186→    searchFields: ["status", "valuesJson"],
+   187→    fields: [
+   188→      idField(),
+   189→      { name: "barangayId", label: "Barangay", type: "string", required: true, fk: "barangays" },
+   190→      { name: "year", label: "Year", type: "number", required: true },
+   191→      { name: "status", label: "Status", type: "string" },
+   192→      { name: "templateLang", label: "Template Language", type: "string", nullable: true, help: "EN | TL" },
+   193→      { name: "valuesJson", label: "Form Values (JSON)", type: "json" },
+   194→      { name: "progress", label: "Progress", type: "number" },
+   195→      { name: "version", label: "Version", type: "number" },
+   196→      { name: "submittedAt", label: "Submitted At", type: "datetime", nullable: true },
+   197→      { name: "resubmittedAt", label: "Resubmitted At", type: "datetime", nullable: true },
+   198→      { name: "underReviewAt", label: "Under Review At", type: "datetime", nullable: true },
+   199→      { name: "approvedAt", label: "Approved At", type: "datetime", nullable: true },
+   200→      { name: "finalizedAt", label: "Finalized At", type: "datetime", nullable: true },
+   201→      { name: "downloadedAt", label: "Downloaded At", type: "datetime", nullable: true },
+   202→      createdAtField,
+   203→      updatedAtField,
+   204→    ],
+   205→  },
+   206→  {
+   207→    key: "submission_versions",
+   208→    model: "submissionVersion",
+   209→    label: "Submission Versions",
+   210→    group: "Plans & Reviews",
+   211→    desc: "Immutable snapshots of every submitted version (v1, v2, …).",
+   212→    idField: "id",
+   213→    orderBy: { field: "submittedAt", dir: "desc" },
+   214→    searchFields: ["note"],
+   215→    fields: [
+   216→      idField(),
+   217→      { name: "submissionId", label: "Submission", type: "string", required: true, fk: "submissions" },
+   218→      { name: "version", label: "Version", type: "number", required: true },
+   219→      { name: "valuesJson", label: "Values (JSON)", type: "json", required: true },
+   220→      { name: "filesJson", label: "Files (JSON)", type: "json" },
+   221→      { name: "note", label: "Note", type: "string", nullable: true },
+   222→      { name: "submittedAt", label: "Submitted At", type: "datetime" },
+   223→    ],
+   224→  },
+   225→  {
+   226→    key: "submission_files",
+   227→    model: "submissionFile",
+   228→    label: "Submission Files",
+   229→    group: "Documents",
+   230→    desc: "Uploaded supporting documents per submission section.",
+   231→    idField: "id",
+   232→    orderBy: { field: "uploadedAt", dir: "desc" },
+   233→    searchFields: ["filename", "sectionKey", "mimeType", "uploadedBy"],
+   234→    fields: [
+   235→      idField(),
+   236→      { name: "submissionId", label: "Submission", type: "string", required: true, fk: "submissions" },
+   237→      { name: "sectionKey", label: "Section Key", type: "string", required: true },
+   238→      { name: "filename", label: "Filename", type: "string", required: true },
+   239→      { name: "storageKey", label: "Storage Key", type: "string", required: true },
+   240→      { name: "mimeType", label: "MIME Type", type: "string", required: true },
+   241→      { name: "size", label: "Size (bytes)", type: "number", required: true },
+   242→      { name: "version", label: "Version", type: "number" },
+   243→      { name: "status", label: "Status", type: "string" },
+   244→      { name: "uploadedBy", label: "Uploaded By", type: "string", required: true },
+   245→      { name: "uploadedAt", label: "Uploaded At", type: "datetime" },
+   246→    ],
+   247→  },
+   248→  {
+   249→    key: "reviews",
+   250→    model: "review",
+   251→    label: "Reviews",
+   252→    group: "Plans & Reviews",
+   253→    desc: "Review actions (started / commented / revision requested / approved).",
+   254→    idField: "id",
+   255→    orderBy: { field: "createdAt", dir: "desc" },
+   256→    searchFields: ["reviewerName", "action", "overallComment"],
+   257→    fields: [
+   258→      idField(),
+   259→      { name: "submissionId", label: "Submission", type: "string", required: true, fk: "submissions" },
+   260→      { name: "version", label: "Version", type: "number", required: true },
+   261→      { name: "reviewerId", label: "Reviewer ID", type: "string", required: true, fk: "admin_users" },
+   262→      { name: "reviewerName", label: "Reviewer", type: "string", required: true },
+   263→      { name: "action", label: "Action", type: "string", required: true },
+   264→      { name: "overallComment", label: "Overall Comment", type: "string", nullable: true },
+   265→      createdAtField,
+   266→    ],
+   267→  },
+   268→  {
+   269→    key: "review_comments",
+   270→    model: "reviewComment",
+   271→    label: "Review Comments",
+   272→    group: "Plans & Reviews",
+   273→    desc: "Section-level review comments attached to a review.",
+   274→    idField: "id",
+   275→    orderBy: { field: "createdAt", dir: "desc" },
+   276→    searchFields: ["sectionKey", "comment"],
+   277→    fields: [
+   278→      idField(),
+   279→      { name: "reviewId", label: "Review", type: "string", required: true, fk: "reviews" },
+   280→      { name: "sectionKey", label: "Section Key", type: "string", required: true },
+   281→      { name: "comment", label: "Comment", type: "string", required: true },
+   282→      { name: "requiresRevision", label: "Requires Revision", type: "boolean" },
+   283→      createdAtField,
+   284→    ],
+   285→  },
+   286→  {
+   287→    key: "rating_criteria",
+   288→    model: "ratingCriterion",
+   289→    label: "Rating Criteria",
+   290→    group: "System",
+   291→    desc: "Configurable evaluation criteria and their maximum scores.",
+   292→    idField: "id",
+   293→    orderBy: { field: "order", dir: "asc" },
+   294→    searchFields: ["key", "name"],
+   295→    fields: [
+   296→      idField(),
+   297→      { name: "key", label: "Key", type: "string", required: true },
+   298→      { name: "name", label: "Name", type: "string", required: true },
+   299→      { name: "maxScore", label: "Max Score", type: "number", required: true },
+   300→      { name: "order", label: "Order", type: "number" },
+   301→      { name: "active", label: "Active", type: "boolean" },
+   302→      createdAtField,
+   303→      updatedAtField,
+   304→    ],
+   305→  },
+   306→  {
+   307→    key: "ratings",
+   308→    model: "rating",
+   309→    label: "Ratings",
+   310→    group: "Plans & Reviews",
+   311→    desc: "Evaluation scores given to submissions.",
+   312→    idField: "id",
+   313→    orderBy: { field: "createdAt", dir: "desc" },
+   314→    searchFields: ["scoresJson", "remarks", "ratedByName"],
+   315→    fields: [
+   316→      idField(),
+   317→      { name: "submissionId", label: "Submission", type: "string", required: true, fk: "submissions" },
+   318→      { name: "scoresJson", label: "Scores (JSON)", type: "json", required: true },
+   319→      { name: "total", label: "Total", type: "number", required: true },
+   320→      { name: "remarks", label: "Remarks", type: "string", nullable: true },
+   321→      { name: "ratedBy", label: "Rated By (ID)", type: "string", required: true, fk: "admin_users" },
+   322→      { name: "ratedByName", label: "Rated By", type: "string", nullable: true },
+   323→      createdAtField,
+   324→    ],
+   325→  },
+   326→  {
+   327→    key: "generated_documents",
+   328→    model: "generatedDocument",
+   329→    label: "Generated Documents",
+   330→    group: "Documents",
+   331→    desc: "Final signed BDRRMP PDFs with document IDs.",
+   332→    idField: "id",
+   333→    orderBy: { field: "generatedAt", dir: "desc" },
+   334→    searchFields: ["docId", "signedBy", "fileKey"],
+   335→    fields: [
+   336→      idField(),
+   337→      { name: "submissionId", label: "Submission", type: "string", required: true, fk: "submissions" },
+   338→      { name: "docId", label: "Document ID", type: "string", required: true },
+   339→      { name: "version", label: "Version", type: "number", required: true },
+   340→      { name: "fileKey", label: "File Key", type: "string", required: true },
+   341→      { name: "lang", label: "Language", type: "string" },
+   342→      { name: "signed", label: "Signed", type: "boolean" },
+   343→      { name: "signedBy", label: "Signed By", type: "string", nullable: true },
+   344→      { name: "signedAt", label: "Signed At", type: "datetime", nullable: true },
+   345→      { name: "signatureHash", label: "Signature Hash", type: "string", nullable: true },
+   346→      { name: "generatedAt", label: "Generated At", type: "datetime" },
+   347→    ],
+   348→  },
+   349→  {
+   350→    key: "download_logs",
+   351→    model: "downloadLog",
+   352→    label: "Download Logs",
+   353→    group: "Documents",
+   354→    desc: "Who downloaded which final document and when.",
+   355→    idField: "id",
+   356→    orderBy: { field: "createdAt", dir: "desc" },
+   357→    searchFields: ["downloadedBy", "ip"],
+   358→    fields: [
+   359→      idField(),
+   360→      { name: "documentId", label: "Document", type: "string", required: true, fk: "generated_documents" },
+   361→      { name: "downloadedBy", label: "Downloaded By", type: "string", required: true },
+   362→      { name: "ip", label: "IP", type: "string", nullable: true },
+   363→      createdAtField,
+   364→    ],
+   365→  },
+   366→  {
+   367→    key: "notifications",
+   368→    model: "notification",
+   369→    label: "Notifications",
+   370→    group: "System",
+   371→    desc: "In-app notifications for barangays and the MDRRMO.",
+   372→    idField: "id",
+   373→    orderBy: { field: "createdAt", dir: "desc" },
+   374→    searchFields: ["title", "body", "type"],
+   375→    fields: [
+   376→      idField(),
+   377→      { name: "barangayId", label: "Barangay", type: "string", nullable: true, fk: "barangays" },
+   378→      { name: "audience", label: "Audience", type: "string", required: true, help: "BARANGAY | ADMIN" },
+   379→      { name: "type", label: "Type", type: "string", required: true },
+   380→      { name: "title", label: "Title", type: "string", required: true },
+   381→      { name: "body", label: "Body", type: "string", nullable: true },
+   382→      { name: "link", label: "Link", type: "string", nullable: true },
+   383→      { name: "read", label: "Read", type: "boolean" },
+   384→      createdAtField,
+   385→    ],
+   386→  },
+   387→  {
+   388→    key: "audit_logs",
+   389→    model: "auditLog",
+   390→    label: "Audit Logs",
+   391→    group: "System",
+   392→    desc: "Full audit trail of every action in the system.",
+   393→    idField: "id",
+   394→    orderBy: { field: "createdAt", dir: "desc" },
+   395→    searchFields: ["actorName", "action", "detail", "ip"],
+   396→    fields: [
+   397→      idField(),
+   398→      { name: "actorType", label: "Actor Type", type: "string", required: true },
+   399→      { name: "actorName", label: "Actor", type: "string", required: true },
+   400→      { name: "action", label: "Action", type: "string", required: true },
+   401→      { name: "detail", label: "Detail", type: "string", nullable: true },
+   402→      { name: "barangayId", label: "Barangay", type: "string", nullable: true, fk: "barangays" },
+   403→      { name: "ip", label: "IP", type: "string", nullable: true },
+   404→      createdAtField,
+   405→    ],
+   406→  },
+   407→  {
+   408→    key: "tutorials",
+   409→    model: "tutorial",
+   410→    label: "Tutorials",
+   411→    group: "System",
+   412→    desc: "Help guides shown inside the barangay portal (EN + TL).",
+   413→    idField: "id",
+   414→    orderBy: { field: "order", dir: "asc" },
+   415→    searchFields: ["key", "titleEn", "titleTl"],
+   416→    fields: [
+   417→      idField(),
+   418→      { name: "key", label: "Key", type: "string", required: true },
+   419→      { name: "titleEn", label: "Title (EN)", type: "string", required: true },
+   420→      { name: "titleTl", label: "Title (TL)", type: "string", required: true },
+   421→      { name: "bodyEn", label: "Body (EN)", type: "string", required: true },
+   422→      { name: "bodyTl", label: "Body (TL)", type: "string", required: true },
+   423→      { name: "order", label: "Order", type: "number" },
+   424→      { name: "active", label: "Active", type: "boolean" },
+   425→      createdAtField,
+   426→      updatedAtField,
+   427→    ],
+   428→  },
+   429→  {
+   430→    key: "system_settings",
+   431→    model: "systemSetting",
+   432→    label: "System Settings",
+   433→    group: "System",
+   434→    desc: "Key–value application settings (JSON-encoded values).",
+   435→    idField: "key",
+   436→    orderBy: { field: "key", dir: "asc" },
+   437→    searchFields: ["key", "value"],
+   438→    fields: [
+   439→      { name: "key", label: "Key", type: "string", required: true },
+   440→      { name: "value", label: "Value (JSON)", type: "json", required: true },
+   441→    ],
+   442→  },
+   443→];
+   444→
+   445→export function getTableDef(key: string): DbTableDef | undefined {
+   446→  return DB_TABLES.find((t) => t.key === key);
+   447→}
+   448→
+   449→// Minimal structural type so we can address Prisma models dynamically
+   450→// without pulling the full Prisma client types into this module.
+   451→interface DynamicModel {
+   452→  count: (args?: any) => Promise<number>;
+   453→  findMany: (args?: any) => Promise<any[]>;
+   454→  findUnique: (args: any) => Promise<any | null>;
+   455→  create: (args: any) => Promise<any>;
+   456→  update: (args: any) => Promise<any>;
+   457→  delete: (args: any) => Promise<any>;
+   458→}
+   459→
+   460→function getModel(def: DbTableDef): DynamicModel {
+   461→  const models = db as unknown as Record<string, DynamicModel>;
+   462→  const model = models[def.model];
+   463→  if (!model) throw new Error(`Unknown Prisma model: ${def.model}`);
+   464→  return model;
+   465→}
+   466→
+   467→export interface TableSummary {
+   468→  key: string;
+   469→  label: string;
+   470→  group: string;
+   471→  desc: string;
+   472→  count: number;
+   473→  fields: DbFieldDef[];
+   474→  idField: string;
+   475→  orderBy: { field: string; dir: "asc" | "desc" };
+   476→  searchFields: string[];
+   477→}
+   478→
+   479→export async function listTables(): Promise<TableSummary[]> {
+   480→  const out: TableSummary[] = [];
+   481→  for (const def of DB_TABLES) {
+   482→    const count = await getModel(def).count().catch(() => 0);
+   483→    out.push({
+   484→      key: def.key,
+   485→      label: def.label,
+   486→      group: def.group,
+   487→      desc: def.desc,
+   488→      count,
+   489→      fields: def.fields,
+   490→      idField: def.idField,
+   491→      orderBy: def.orderBy,
+   492→      searchFields: def.searchFields,
+   493→    });
+   494→  }
+   495→  return out;
+   496→}
+   497→
+   498→function buildSearchWhere(def: DbTableDef, search: string) {
+   499→  if (!search) return undefined;
+   500→  return { OR: def.searchFields.map((f) => ({ [f]: { contains: search } })) };
+   501→}
+   502→
+   503→export async function listRows(
+   504→  tableKey: string,
+   505→  opts: { page: number; pageSize: number; search: string }
+   506→): Promise<{ rows: Record<string, unknown>[]; total: number; page: number; pageSize: number }> {
+   507→  const def = getTableDef(tableKey);
+   508→  if (!def) throw new Error("Unknown table");
+   509→  const model = getModel(def);
+   510→  const page = Math.max(1, opts.page);
+   511→  const pageSize = Math.min(100, Math.max(5, opts.pageSize));
+   512→  const where = buildSearchWhere(def, opts.search);
+   513→  const [rows, total] = await Promise.all([
+   514→    model.findMany({
+   515→      where,
+   516→      orderBy: { [def.orderBy.field]: def.orderBy.dir },
+   517→      skip: (page - 1) * pageSize,
+   518→      take: pageSize,
+   519→    }),
+   520→    model.count({ where }),
+   521→  ]);
+   522→  return { rows: rows as Record<string, unknown>[], total, page, pageSize };
+   523→}
+   524→
+   525→// Coerce and validate a raw payload against the table's field definitions.
+   526→// Returns { data } ready for Prisma, or throws with a readable message.
+   527→export function coerceRowData(
+   528→  def: DbTableDef,
+   529→  body: Record<string, unknown>,
+   530→  mode: "create" | "update"
+   531→): Record<string, unknown> {
+   532→  const data: Record<string, unknown> = {};
+   533→  for (const field of def.fields) {
+   534→    const present = Object.prototype.hasOwnProperty.call(body, field.name);
+   535→    if (mode === "create") {
+   536→      if (field.readonly) continue; // auto-generated
+   537→      if (!present) {
+   538→        if (field.required) throw new Error(`Field "${field.label}" is required.`);
+   539→        continue; // optional fields fall back to Prisma defaults
+   540→      }
+   541→    } else {
+   542→      if (!present || field.readonly) continue;
+   543→    }
+   544→    const raw = body[field.name];
+   545→    if (raw === null || raw === "" || raw === undefined) {
+   546→      if (field.type === "boolean") {
+   547→        data[field.name] = false;
+   548→        continue;
+   549→      }
+   550→      if (field.nullable) {
+   551→        data[field.name] = null;
+   552→        continue;
+   553→      }
+   554→      if (mode === "update") continue; // skip clearing non-nullable fields
+   555→      throw new Error(`Field "${field.label}" cannot be empty.`);
+   556→    }
+   557→    switch (field.type) {
+   558→      case "number": {
+   559→        const n = Number(raw);
+   560→        if (!Number.isFinite(n)) throw new Error(`Field "${field.label}" must be a number.`);
+   561→        data[field.name] = n;
+   562→        break;
+   563→      }
+   564→      case "boolean":
+   565→        data[field.name] = raw === true || raw === "true" || raw === 1 || raw === "1";
+   566→        break;
+   567→      case "datetime": {
+   568→        const d = new Date(String(raw));
+   569→        if (isNaN(d.getTime())) throw new Error(`Field "${field.label}" must be a valid date/time.`);
+   570→        data[field.name] = d;
+   571→        break;
+   572→      }
+   573→      case "json": {
+   574→        try {
+   575→          const parsed = JSON.parse(String(raw));
+   576→          data[field.name] = JSON.stringify(parsed);
+   577→        } catch {
+   578→          throw new Error(`Field "${field.label}" must contain valid JSON.`);
+   579→        }
+   580→        break;
+   581→      }
+   582→      default:
+   583→        data[field.name] = String(raw);
+   584→    }
+   585→  }
+   586→  if (Object.keys(data).length === 0) throw new Error("Nothing to save — no editable fields were provided.");
+   587→  return data;
+   588→}
+   589→
+   590→export async function createRow(
+   591→  tableKey: string,
+   592→  body: Record<string, unknown>,
+   593→  actor: { name: string; ip?: string }
+   594→): Promise<Record<string, unknown>> {
+   595→  const def = getTableDef(tableKey);
+   596→  if (!def) throw new Error("Unknown table");
+   597→  const data = coerceRowData(def, body, "create");
+   598→  try {
+   599→    const row = (await getModel(def).create({ data })) as Record<string, unknown>;
+   600→    await logAudit({
+   601→      actorType: "ADMIN",
+   602→      actorName: actor.name,
+   603→      action: "DB_CREATE",
+   604→      detail: `Created row in ${def.label} (${def.idField}=${String(row[def.idField])}) via Database Management`,
+   605→      ip: actor.ip,
+   606→    });
+   607→    return row;
+   608→  } catch (e) {
+   609→    throw new Error(friendlyDbError(e, def.label, "create"));
+   610→  }
+   611→}
+   612→
+   613→export async function updateRow(
+   614→  tableKey: string,
+   615→  id: string,
+   616→  body: Record<string, unknown>,
+   617→  actor: { name: string; ip?: string }
+   618→): Promise<Record<string, unknown>> {
+   619→  const def = getTableDef(tableKey);
+   620→  if (!def) throw new Error("Unknown table");
+   621→  const model = getModel(def);
+   622→  const existing = await model.findUnique({ where: { [def.idField]: id } });
+   623→  if (!existing) throw new Error("Row not found.");
+   624→  const data = coerceRowData(def, body, "update");
+   625→  try {
+   626→    const row = (await model.update({ where: { [def.idField]: id }, data })) as Record<string, unknown>;
+   627→    await logAudit({
+   628→      actorType: "ADMIN",
+   629→      actorName: actor.name,
+   630→      action: "DB_UPDATE",
+   631→      detail: `Updated row in ${def.label} (${def.idField}=${id}) via Database Management`,
+   632→      ip: actor.ip,
+   633→    });
+   634→    return row;
+   635→  } catch (e) {
+   636→    throw new Error(friendlyDbError(e, def.label, "update"));
+   637→  }
+   638→}
+   639→
+   640→export async function deleteRow(
+   641→  tableKey: string,
+   642→  id: string,
+   643→  actor: { id: string; name: string; ip?: string }
+   644→): Promise<void> {
+   645→  const def = getTableDef(tableKey);
+   646→  if (!def) throw new Error("Unknown table");
+   647→  const model = getModel(def);
+   648→  const existing = await model.findUnique({ where: { [def.idField]: id } });
+   649→  if (!existing) throw new Error("Row not found.");
+   650→
+   651→  // Guardrails for the admin_users table
+   652→  if (def.key === "admin_users") {
+   653→    const row = existing as unknown as { id: string; username: string; role: string; active: boolean };
+   654→    if (row.id === actor.id) throw new Error("You cannot delete your own account.");
+   655→    if (row.username === "sysadmin") throw new Error("The default System Administrator account (sysadmin) cannot be deleted.");
+   656→    if (row.role === "SYSTEM_ADMIN") {
+   657→      const admins = await db.adminUser.findMany({ where: { role: "SYSTEM_ADMIN", active: true } });
+   658→      if (admins.length <= 1) throw new Error("Cannot delete the last active System Administrator account.");
+   659→    }
+   660→  }
+   661→
+   662→  try {
+   663→    await model.delete({ where: { [def.idField]: id } });
+   664→    await logAudit({
+   665→      actorType: "ADMIN",
+   666→      actorName: actor.name,
+   667→      action: "DB_DELETE",
+   668→      detail: `Deleted row from ${def.label} (${def.idField}=${id}) via Database Management`,
+   669→      ip: actor.ip,
+   670→    });
+   671→  } catch (e) {
+   672→    throw new Error(friendlyDbError(e, def.label, "delete"));
+   673→  }
+   674→}
+   675→
+   676→function friendlyDbError(e: unknown, label: string, verb: string): string {
+   677→  const msg = e instanceof Error ? e.message : String(e);
+   678→  if (msg.includes("UNIQUE constraint failed")) {
+   679→    return `A row with the same unique value already exists in ${label}.`;
+   680→  }
+   681→  if (msg.includes("FOREIGN KEY constraint failed")) {
+   682→    return `Cannot ${verb} this ${label} row — other records reference it.`;
+   683→  }
+   684→  if (msg.includes("Required value missing")) {
+   685→    return `A required field is missing for ${label}.`;
+   686→  }
+   687→  return `Could not ${verb} the ${label} row: ${msg.slice(0, 200)}`;
+   688→}
+   689→
