@@ -1,0 +1,272 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============ ADMIN USERS (MDRRMO / System Admin) ============
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  passwordHash String
+  name         String
+  position     String?
+  role         String    @default("MDRRMO_ADMIN") // MDRRMO_ADMIN | SYSTEM_ADMIN
+  active       Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// ============ BARANGAYS ============
+
+model Barangay {
+  id         String        @id @default(cuid())
+  code       String        @unique // e.g. PD-BRG-001
+  name       String
+  captain    String?
+  population Int?
+  households Int?
+  puroks     Int?
+  landArea   Float?
+  active     Boolean       @default(true)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  credential BarangayCredential?
+  submissions Submission[]
+  auditLogs  AuditLog[]
+}
+
+model BarangayCredential {
+  id             String    @id @default(cuid())
+  barangayId     String    @unique
+  pinHash        String
+  tempPin        String? // plaintext temp PIN shown to MDRRMO admin only ONCE at generation (nulled after first change)
+  mustChangePin  Boolean   @default(true)
+  active         Boolean   @default(true)
+  failedAttempts Int       @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  lastLoginIp    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  barangay       Barangay  @relation(fields: [barangayId], references: [id], onDelete: Cascade)
+}
+
+// ============ SESSIONS ============
+
+model Session {
+  id         String   @id @default(cuid())
+  token      String   @unique
+  role       String // BARANGAY | ADMIN
+  barangayId String?
+  adminId    String?
+  ip         String?
+  userAgent  String?
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+}
+
+// ============ TEMPLATE (sections & fields, EN + TL labels) ============
+
+model TemplateSection {
+  id            String  @id @default(cuid())
+  key           String  @unique // barangay_profile, hazard_assessment, ...
+  order         Int
+  titleEn       String
+  titleTl       String
+  descEn        String?
+  descTl        String?
+  icon          String? // lucide icon name
+  requiresUpload Boolean @default(false)
+  uploadLabelEn  String?
+  uploadLabelTl  String?
+  uploadFormats  String  @default("pdf,jpg,jpeg,png,doc,docx")
+  uploadMaxMB    Float   @default(10)
+  required       Boolean @default(true)
+  active         Boolean @default(true)
+  fieldsJson     String  @default("[]") // JSON: [{key,type,labelEn,labelTl,required,options?,helpEn?,helpTl?,unit?,placeholder?}]
+}
+
+// ============ SUBMISSIONS ============
+
+model Submission {
+  id             String   @id @default(cuid())
+  barangayId     String
+  barangay       Barangay @relation(fields: [barangayId], references: [id], onDelete: Cascade)
+  year           Int
+  status         String   @default("NOT_STARTED")
+  templateLang   String? // EN | TL
+  valuesJson     String   @default("{}")
+  progress       Int      @default(0)
+  version        Int      @default(0) // increments per submission
+  submittedAt    DateTime?
+  resubmittedAt  DateTime?
+  underReviewAt  DateTime?
+  approvedAt     DateTime?
+  finalizedAt    DateTime?
+  downloadedAt   DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  files     SubmissionFile[]
+  versions  SubmissionVersion[]
+  reviews   Review[]
+  ratings   Rating[]
+  documents GeneratedDocument[]
+
+  @@unique([barangayId, year])
+}
+
+model SubmissionVersion {
+  id           String   @id @default(cuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  version      Int
+  valuesJson   String
+  filesJson    String   @default("[]")
+  note         String?
+  submittedAt  DateTime @default(now())
+}
+
+model SubmissionFile {
+  id           String   @id @default(cuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  sectionKey   String
+  filename     String
+  storageKey   String
+  mimeType     String
+  size         Int
+  version      Int      @default(1)
+  status       String   @default("PENDING") // PENDING | APPROVED | NEEDS_REVISION
+  uploadedBy   String
+  uploadedAt   DateTime @default(now())
+}
+
+// ============ REVIEWS ============
+
+model Review {
+  id             String   @id @default(cuid())
+  submissionId   String
+  submission     Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  version        Int
+  reviewerId     String
+  reviewerName   String
+  action         String // START_REVIEW | COMMENT | REVISION_REQUESTED | APPROVED | RATED
+  overallComment String?
+  createdAt      DateTime @default(now())
+  comments       ReviewComment[]
+}
+
+model ReviewComment {
+  id               String   @id @default(cuid())
+  reviewId         String
+  review           Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  sectionKey       String
+  comment          String
+  requiresRevision Boolean  @default(false)
+  createdAt        DateTime @default(now())
+}
+
+// ============ RATINGS (configurable criteria) ============
+
+model RatingCriterion {
+  id       String  @id @default(cuid())
+  key      String  @unique
+  name     String
+  maxScore Int
+  order    Int
+  active   Boolean @default(true)
+}
+
+model Rating {
+  id           String   @id @default(cuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  scoresJson   String // {"completeness":25,...}
+  total        Int
+  remarks      String?
+  ratedBy      String
+  ratedByName  String?
+  createdAt    DateTime @default(now())
+}
+
+// ============ GENERATED DOCUMENTS ============
+
+model GeneratedDocument {
+  id            String   @id @default(cuid())
+  submissionId  String
+  submission    Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  docId         String   @unique // QAS33-BDRRMP-26-006
+  version       Int
+  fileKey       String
+  lang          String   @default("EN")
+  signed        Boolean  @default(false)
+  signedBy      String?
+  signedAt      DateTime?
+  signatureHash String?
+  generatedAt   DateTime @default(now())
+  downloads     DownloadLog[]
+}
+
+model DownloadLog {
+  id           String   @id @default(cuid())
+  documentId   String
+  document     GeneratedDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  downloadedBy String
+  ip           String?
+  createdAt    DateTime @default(now())
+}
+
+// ============ NOTIFICATIONS ============
+
+model Notification {
+  id         String   @id @default(cuid())
+  barangayId String? // null => ADMIN audience
+  audience   String // BARANGAY | ADMIN
+  type       String // COMMENT | REVISION | SUBMITTED | APPROVED | FINALIZED | SYSTEM
+  title      String
+  body       String?
+  link       String?
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+// ============ AUDIT TRAIL ============
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorType  String // BARANGAY | ADMIN | SYSTEM
+  actorName  String
+  action     String
+  detail     String?
+  barangayId String?
+  barangay   Barangay? @relation(fields: [barangayId], references: [id], onDelete: SetNull)
+  ip         String?
+  createdAt  DateTime @default(now())
+}
+
+// ============ TUTORIALS ============
+
+model Tutorial {
+  id      String  @id @default(cuid())
+  key     String  @unique
+  titleEn String
+  titleTl String
+  bodyEn  String
+  bodyTl  String
+  order   Int
+  active  Boolean @default(true)
+}
+
+// ============ SETTINGS ============
+
+model SystemSetting {
+  key   String @id
+  value String // JSON-encoded
+}

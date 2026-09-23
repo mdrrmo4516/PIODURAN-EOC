@@ -1,0 +1,1083 @@
+     1→"use client";
+     2→
+     3→// QAS33 Barangay Portal — My BDRRMP wizard (template select, sections, autosave,
+     4→// uploads, pre-submission check, submit flow)
+     5→
+     6→import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+     7→import {
+     8→  AlertTriangle,
+     9→  ArrowLeft,
+    10→  ArrowRight,
+    11→  Check,
+    12→  CheckCircle2,
+    13→  ChevronRight,
+    14→  ClipboardCheck,
+    15→  FileText,
+    16→  Languages,
+    17→  Loader2,
+    18→  Lock,
+    19→  Paperclip,
+    20→  PencilLine,
+    21→  RefreshCw,
+    22→  Trash2,
+    23→  UploadCloud,
+    24→} from "lucide-react";
+    25→import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+    26→import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+    27→import { Button } from "@/components/ui/button";
+    28→import { Card } from "@/components/ui/card";
+    29→import { Checkbox } from "@/components/ui/checkbox";
+    30→import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+    31→import { Progress } from "@/components/ui/progress";
+    32→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+    33→import { Separator } from "@/components/ui/separator";
+    34→import { useToast } from "@/hooks/use-toast";
+    35→import { cn } from "@/lib/utils";
+    36→import { api, formatDate } from "@/lib/qas33/api";
+    37→import type { BarangaySubmissionData, ClientSection, CommentItem, FileMeta, SubmissionStatus } from "@/lib/qas33/types";
+    38→import { FieldControl, ReadonlyField, fieldHasValue } from "./barangay-fields";
+    39→import { PreviewDialog } from "./barangay-preview";
+    40→import {
+    41→  FileStatusBadge,
+    42→  SectionIcon,
+    43→  errMsg,
+    44→  formatFileSize,
+    45→  isEditableStatus,
+    46→  isFinalized,
+    47→  isLockedForReview,
+    48→} from "./barangay-shared";
+    49→
+    50→const CHECK_STEP = "__check__";
+    51→type SaveState = "idle" | "pending" | "saving" | "saved" | "error";
+    52→
+    53→export interface WizardProps {
+    54→  data: BarangaySubmissionData;
+    55→  barangayName: string;
+    56→  onReload: () => void | Promise<void>;
+    57→  onRefreshOverview: () => void;
+    58→  focusSectionKey?: string | null;
+    59→  onFocused: () => void;
+    60→}
+    61→
+    62→export default function BarangayWizard({
+    63→  data,
+    64→  barangayName,
+    65→  onReload,
+    66→  onRefreshOverview,
+    67→  focusSectionKey,
+    68→  onFocused,
+    69→}: WizardProps) {
+    70→  const { toast } = useToast();
+    71→  const { submission, sections, files, validation } = data;
+    72→  const lang = submission.templateLang;
+    73→  const editable = isEditableStatus(submission.status);
+    74→  const t = useCallback((en: string, tl: string) => (lang === "TL" ? tl : en), [lang]);
+    75→
+    76→  // ---- reviewer comments (for revision callouts) ----
+    77→  const [comments, setComments] = useState<CommentItem[]>([]);
+    78→  useEffect(() => {
+    79→    let alive = true;
+    80→    if (submission.status === "NEEDS_REVISION") {
+    81→      api
+    82→        .comments()
+    83→        .then((r) => alive && setComments(r.comments))
+    84→        .catch(() => {});
+    85→    } else {
+    86→      setComments([]);
+    87→    }
+    88→    return () => {
+    89→      alive = false;
+    90→    };
+    91→  }, [submission.status]);
+    92→
+    93→  const revisionBySection = useMemo(() => {
+    94→    const map = new Map<string, CommentItem[]>();
+    95→    for (const c of comments) {
+    96→      if (!c.requiresRevision) continue;
+    97→      const list = map.get(c.sectionKey) ?? [];
+    98→      list.push(c);
+    99→      map.set(c.sectionKey, list);
+   100→    }
+   101→    return map;
+   102→  }, [comments]);
+   103→
+   104→  // ---- values + debounced autosave ----
+   105→  const [values, setValues] = useState<Record<string, unknown>>(submission.values);
+   106→  const [saveState, setSaveState] = useState<SaveState>("idle");
+   107→  const dirtyRef = useRef(false);
+   108→  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+   109→
+   110→  useEffect(() => {
+   111→    if (!dirtyRef.current) setValues(submission.values);
+   112→  }, [submission.values]);
+   113→
+   114→  useEffect(
+   115→    () => () => {
+   116→      if (saveTimer.current) clearTimeout(saveTimer.current);
+   117→    },
+   118→    []
+   119→  );
+   120→
+   121→  const runSave = useCallback(
+   122→    async (vals: Record<string, unknown>) => {
+   123→      setSaveState("saving");
+   124→      try {
+   125→        await api.saveValues(vals);
+   126→        dirtyRef.current = false;
+   127→        setSaveState("saved");
+   128→        void onReload();
+   129→      } catch (e) {
+   130→        setSaveState("error");
+   131→        toast({ variant: "destructive", title: t("Autosave failed", "Nabigo ang awtomatikong pag-save"), description: errMsg(e) });
+   132→      }
+   133→    },
+   134→    [onReload, t, toast]
+   135→  );
+   136→
+   137→  const scheduleSave = useCallback(
+   138→    (next: Record<string, unknown>) => {
+   139→      dirtyRef.current = true;
+   140→      setSaveState("pending");
+   141→      if (saveTimer.current) clearTimeout(saveTimer.current);
+   142→      saveTimer.current = setTimeout(() => void runSave(next), 1200);
+   143→    },
+   144→    [runSave]
+   145→  );
+   146→
+   147→  function handleChange(key: string, value: unknown) {
+   148→    const next = { ...values, [key]: value };
+   149→    setValues(next);
+   150→    scheduleSave(next);
+   151→  }
+   152→
+   153→  // ---- section navigation ----
+   154→  const sectionState = useCallback(
+   155→    (s: ClientSection): "complete" | "partial" | "empty" => {
+   156→      const sFiles = files.filter((f) => f.sectionKey === s.key);
+   157→      const formComplete = s.fields.filter((f) => f.required).every((f) => fieldHasValue(f, values[f.key]));
+   158→      const needsUpload = s.requiresUpload && s.required;
+   159→      const uploadComplete = !needsUpload || sFiles.length > 0;
+   160→      if (formComplete && uploadComplete) return "complete";
+   161→      const hasAny = s.fields.some((f) => fieldHasValue(f, values[f.key])) || sFiles.length > 0;
+   162→      return hasAny ? "partial" : "empty";
+   163→    },
+   164→    [files, values]
+   165→  );
+   166→
+   167→  const [activeKey, setActiveKey] = useState<string>("");
+   168→  const activeIndex = sections.findIndex((s) => s.key === activeKey);
+   169→  const activeSection = activeIndex >= 0 ? sections[activeIndex] : undefined;
+   170→
+   171→  // focus jump (from dashboard / requirements)
+   172→  useEffect(() => {
+   173→    if (focusSectionKey) {
+   174→      setActiveKey(focusSectionKey);
+   175→      onFocused();
+   176→    }
+   177→  }, [focusSectionKey, onFocused]);
+   178→
+   179→  // initial section: first incomplete, else first (a focus jump takes priority)
+   180→  useEffect(() => {
+   181→    if (activeKey === "" && sections.length > 0 && !focusSectionKey) {
+   182→      const target = sections.find((s) => sectionState(s) !== "complete") ?? sections[0];
+   183→      setActiveKey(target.key);
+   184→    }
+   185→  }, [sections, activeKey, focusSectionKey, sectionState]);
+   186→
+   187→  const goNext = () => {
+   188→    if (activeKey === CHECK_STEP) return;
+   189→    if (activeIndex < sections.length - 1) setActiveKey(sections[activeIndex + 1].key);
+   190→    else setActiveKey(CHECK_STEP);
+   191→  };
+   192→  const goPrev = () => {
+   193→    if (activeKey === CHECK_STEP) {
+   194→      setActiveKey(sections[sections.length - 1]?.key ?? "");
+   195→      return;
+   196→    }
+   197→    if (activeIndex > 0) setActiveKey(sections[activeIndex - 1].key);
+   198→  };
+   199→
+   200→  // ---- template selection ----
+   201→  const [picking, setPicking] = useState<string | null>(null);
+   202→  async function pickTemplate(code: "EN" | "TL") {
+   203→    setPicking(code);
+   204→    try {
+   205→      await api.selectTemplate(code);
+   206→      toast({
+   207→        title: t("Template selected", "Napiling template"),
+   208→        description: code === "TL" ? "Aktibo na ang Tagalog template." : "English template activated.",
+   209→      });
+   210→      await onReload();
+   211→      onRefreshOverview();
+   212→    } catch (e) {
+   213→      toast({ variant: "destructive", title: t("Could not select template", "Hindi mapili ang template"), description: errMsg(e) });
+   214→    } finally {
+   215→      setPicking(null);
+   216→    }
+   217→  }
+   218→
+   219→  // ---- preview + submit ----
+   220→  const [previewOpen, setPreviewOpen] = useState(false);
+   221→  const [submitOpen, setSubmitOpen] = useState(false);
+   222→  const [certified, setCertified] = useState(false);
+   223→  const [submitting, setSubmitting] = useState(false);
+   224→  const [success, setSuccess] = useState<{ version: number; resubmission: boolean } | null>(null);
+   225→  const [checking, setChecking] = useState(false);
+   226→
+   227→  async function doSubmit() {
+   228→    setSubmitting(true);
+   229→    try {
+   230→      // flush any pending autosave before submitting
+   231→      if (saveTimer.current) clearTimeout(saveTimer.current);
+   232→      if (dirtyRef.current) {
+   233→        try {
+   234→          await api.saveValues(values);
+   235→          dirtyRef.current = false;
+   236→        } catch {
+   237→          /* server will still validate on submit */
+   238→        }
+   239→      }
+   240→      const res = await api.submit(true);
+   241→      setSubmitOpen(false);
+   242→      setCertified(false);
+   243→      setSuccess({ version: res.version, resubmission: submission.version > 0 });
+   244→      await onReload();
+   245→      onRefreshOverview();
+   246→    } catch (e) {
+   247→      toast({ variant: "destructive", title: t("Cannot submit yet", "Hindi pa maaaring isumite"), description: errMsg(e) });
+   248→      setSubmitOpen(false);
+   249→      setActiveKey(CHECK_STEP);
+   250→      await onReload();
+   251→    } finally {
+   252→      setSubmitting(false);
+   253→    }
+   254→  }
+   255→
+   256→  // ---------------------------------------------------------------------------
+   257→
+   258→  // Step 0 — template not yet selected
+   259→  if (!lang) {
+   260→    return (
+   261→      <div className="mx-auto max-w-3xl">
+   262→        <Card className="p-6 sm:p-8">
+   263→          <div className="text-center">
+   264→            <div className="mx-auto w-fit rounded-xl bg-primary/10 p-3">
+   265→              <FileText className="size-6 text-primary" aria-hidden="true" />
+   266→            </div>
+   267→            <h2 className="mt-3 text-xl font-semibold">
+   268→              {t("Choose your BDRRMP template", "Piliin ang inyong template ng BDRRMP")}
+   269→            </h2>
+   270→            <p className="mx-auto mt-2 max-w-lg text-sm text-muted-foreground">
+   271→              {t(
+   272→                "The template determines the labels, instructions and the language of the generated document. The underlying data remains the same.",
+   273→                "Ang template ang magtatakda ng mga label, instruksyon at wika ng nabubuong dokumento. Pareho pa rin ang datos na ilalagay."
+   274→              )}
+   275→            </p>
+   276→          </div>
+   277→          <div className="mt-6 grid gap-4 sm:grid-cols-2">
+   278→            {(["EN", "TL"] as const).map((code) => (
+   279→              <button
+   280→                key={code}
+   281→                type="button"
+   282→                onClick={() => void pickTemplate(code)}
+   283→                disabled={picking !== null}
+   284→                className={cn(
+   285→                  "group rounded-xl border-2 border-border p-5 text-left transition-colors hover:border-primary hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+   286→                )}
+   287→              >
+   288→                <div className="flex items-center gap-3">
+   289→                  <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground ring-2 ring-primary/30 ring-offset-2 ring-offset-white">
+   290→                    {code}
+   291→                  </span>
+   292→                  <div>
+   293→                    <p className="font-semibold">{code === "EN" ? "English BDRRMP" : "Tagalog BDRRMP"}</p>
+   294→                    <p className="text-xs text-muted-foreground">
+   295→                      {code === "EN"
+   296→                        ? "Forms, instructions and document in English"
+   297→                        : "Pormularyo, instruksyon at dokumento sa Tagalog"}
+   298→                    </p>
+   299→                  </div>
+   300→                </div>
+   301→                <div className="mt-4 flex items-center justify-between text-sm">
+   302→                  <span className="font-medium text-muted-foreground group-hover:text-primary">
+   303→                    {picking === code ? t("Selecting…", "Pinipili…") : t("Select template", "Piliin ang template")}
+   304→                  </span>
+   305→                  {picking === code ? (
+   306→                    <Loader2 className="size-4 animate-spin text-primary" aria-hidden="true" />
+   307→                  ) : (
+   308→                    <ArrowRight className="size-4 text-muted-foreground group-hover:text-primary" aria-hidden="true" />
+   309→                  )}
+   310→                </div>
+   311→              </button>
+   312→            ))}
+   313→          </div>
+   314→          {submission.version > 0 && (
+   315→            <p className="mt-5 flex items-center justify-center gap-1.5 text-center text-xs text-muted-foreground">
+   316→              <Lock className="size-3 shrink-0" aria-hidden="true" />
+   317→              {t(
+   318→                "Template language can no longer be changed after the first submission. Contact the MDRRMO for assistance.",
+   319→                "Hindi na mababago ang wika ng template pagkatapos ng unang pagsusumite. Makipag-ugnayan sa MDRRMO."
+   320→              )}
+   321→            </p>
+   322→          )}
+   323→        </Card>
+   324→      </div>
+   325→    );
+   326→  }
+   327→
+   328→  const revComments = activeSection ? revisionBySection.get(activeSection.key) ?? [] : [];
+   329→
+   330→  return (
+   331→    <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+   332→      {/* Sidebar */}
+   333→      <aside className="w-full shrink-0 space-y-3 lg:w-72">
+   334→        <Card className="p-4">
+   335→          <div className="flex items-center justify-between">
+   336→            <span className="text-sm font-medium">{t("Overall Progress", "Kabuuang Progreso")}</span>
+   337→            <span className="text-lg font-bold tabular-nums text-primary">{submission.progress}%</span>
+   338→          </div>
+   339→          <Progress value={submission.progress} className="mt-2" aria-label="BDRRMP progress" />
+   340→          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+   341→            <span>
+   342→              {validation.completedSections}/{validation.totalSections}{" "}
+   343→              {t("sections done", "seksyon na tapos")}
+   344→            </span>
+   345→            <span className="inline-flex items-center gap-1">
+   346→              <Languages className="size-3.5" aria-hidden="true" />
+   347→              {lang === "TL" ? "Tagalog" : "English"}
+   348→              {submission.version > 0 && <Lock className="size-3" aria-hidden="true" />}
+   349→            </span>
+   350→          </div>
+   351→          {submission.version > 0 && (
+   352→            <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+   353→              {t(
+   354→                "Template language is locked after the first submission.",
+   355→                "Naka-lock na ang wika ng template pagkatapos ng unang pagsusumite."
+   356→              )}
+   357→            </p>
+   358→          )}
+   359→        </Card>
+   360→
+   361→        {/* Desktop section list */}
+   362→        <Card className="hidden p-2 lg:block">
+   363→          <nav aria-label="BDRRMP sections" className="max-h-[62vh] space-y-0.5 overflow-y-auto pr-1">
+   364→            {sections.map((s) => {
+   365→              const state = sectionState(s);
+   366→              const flagged = submission.status === "NEEDS_REVISION" && revisionBySection.has(s.key);
+   367→              return (
+   368→                <button
+   369→                  key={s.key}
+   370→                  type="button"
+   371→                  title={s.title}
+   372→                  onClick={() => setActiveKey(s.key)}
+   373→                  className={cn(
+   374→                    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent",
+   375→                    activeKey === s.key && "bg-primary/10 font-medium text-primary"
+   376→                  )}
+   377→                >
+   378→                  <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+   379→                    {s.order}
+   380→                  </span>
+   381→                  <span
+   382→                    aria-hidden="true"
+   383→                    className={cn(
+   384→                      "size-2 shrink-0 rounded-full",
+   385→                      state === "complete" && "bg-primary",
+   386→                      state === "partial" && "bg-amber-500",
+   387→                      state === "empty" && "bg-muted-foreground/30",
+   388→                      flagged && "ring-2 ring-destructive ring-offset-2 ring-offset-card"
+   389→                    )}
+   390→                  />
+   391→                  <span className="min-w-0 flex-1 truncate">{s.title}</span>
+   392→                  {s.requiresUpload && <Paperclip className="size-3 shrink-0 text-muted-foreground/60" aria-hidden="true" />}
+   393→                </button>
+   394→              );
+   395→            })}
+   396→            <button
+   397→              type="button"
+   398→              onClick={() => setActiveKey(CHECK_STEP)}
+   399→              className={cn(
+   400→                "mt-1 flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent",
+   401→                activeKey === CHECK_STEP && "bg-primary/10 font-medium text-primary"
+   402→              )}
+   403→            >
+   404→              <ClipboardCheck className="ml-1 size-4 shrink-0" aria-hidden="true" />
+   405→              <span className="min-w-0 flex-1">{t("Pre-Submission Check", "Pagsusuri Bago Isumite")}</span>
+   406→              {validation.ready && <Check className="size-3.5 shrink-0 text-primary" aria-hidden="true" />}
+   407→            </button>
+   408→          </nav>
+   409→        </Card>
+   410→
+   411→        {/* Mobile section picker (mounted once a section is active) */}
+   412→        {activeKey !== "" && activeKey !== CHECK_STEP && (
+   413→          <div className="lg:hidden">
+   414→            <Select value={activeKey} onValueChange={setActiveKey}>
+   415→              <SelectTrigger className="w-full" aria-label="Go to section">
+   416→                <SelectValue placeholder={t("Go to section…", "Pumunta sa seksyon…")} />
+   417→              </SelectTrigger>
+   418→              <SelectContent>
+   419→                {sections.map((s) => (
+   420→                  <SelectItem key={s.key} value={s.key}>
+   421→                    <span className="flex items-center gap-2">
+   422→                      <span
+   423→                        aria-hidden="true"
+   424→                        className={cn(
+   425→                          "size-2 rounded-full",
+   426→                          sectionState(s) === "complete" && "bg-primary",
+   427→                          sectionState(s) === "partial" && "bg-amber-500",
+   428→                          sectionState(s) === "empty" && "bg-muted-foreground/30"
+   429→                        )}
+   430→                      />
+   431→                      {s.order}. {s.title}
+   432→                    </span>
+   433→                  </SelectItem>
+   434→                ))}
+   435→                <SelectItem value={CHECK_STEP}>
+   436→                  <span className="flex items-center gap-2">
+   437→                    <ClipboardCheck className="size-3.5" aria-hidden="true" />
+   438→                    {t("Pre-Submission Check", "Pagsusuri Bago Isumite")}
+   439→                  </span>
+   440→                </SelectItem>
+   441→              </SelectContent>
+   442→            </Select>
+   443→          </div>
+   444→        )}
+   445→      </aside>
+   446→
+   447→      {/* Main panel */}
+   448→      <div className="min-w-0 flex-1">
+   449→        <StatusBanner status={submission.status} t={t} />
+   450→
+   451→        {activeKey === CHECK_STEP ? (
+   452→          <PreCheckPanel
+   453→            validation={validation}
+   454→            progress={submission.progress}
+   455→            editable={editable}
+   456→            checking={checking}
+   457→            t={t}
+   458→            onRecheck={async () => {
+   459→              setChecking(true);
+   460→              await onReload();
+   461→              setChecking(false);
+   462→            }}
+   463→            onGoSection={setActiveKey}
+   464→            onBack={() => setActiveKey(sections[sections.length - 1]?.key ?? "")}
+   465→            onPreview={() => setPreviewOpen(true)}
+   466→            onSubmit={() => setSubmitOpen(true)}
+   467→          />
+   468→        ) : activeSection ? (
+   469→          <Card className="p-4 sm:p-6">
+   470→            <div className="flex flex-wrap items-start justify-between gap-3">
+   471→              <div className="flex min-w-0 items-start gap-3">
+   472→                <div className="rounded-lg bg-primary/10 p-2">
+   473→                  <SectionIcon icon={activeSection.icon} className="size-5 text-primary" />
+   474→                </div>
+   475→                <div className="min-w-0">
+   476→                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+   477→                    {t("Section", "Seksyon")} {activeSection.order} / {sections.length}
+   478→                    {!activeSection.required && ` · ${t("Optional", "Opsyonal")}`}
+   479→                  </p>
+   480→                  <h2 className="text-lg font-semibold leading-snug">{activeSection.title}</h2>
+   481→                  {activeSection.desc && (
+   482→                    <p className="mt-0.5 text-sm text-muted-foreground">{activeSection.desc}</p>
+   483→                  )}
+   484→                </div>
+   485→              </div>
+   486→              {editable && (
+   487→                <SaveIndicator
+   488→                  state={saveState}
+   489→                  onRetry={() => void runSave(values)}
+   490→                  savingLabel={t("Saving…", "Nagse-save…")}
+   491→                  savedLabel={t("All changes saved", "Naka-save ang lahat ng pagbabago")}
+   492→                  pendingLabel={t("Unsaved changes…", "May hindi pa naka-save…")}
+   493→                />
+   494→              )}
+   495→            </div>
+   496→
+   497→            {editable && revComments.length > 0 && (
+   498→              <div className="mt-4 space-y-2">
+   499→                {revComments.map((c) => (
+   500→                  <Alert key={c.id} variant="destructive">
+   501→                    <AlertTriangle />
+   502→                    <AlertTitle>
+   503→                      {t("MDRRMO revision comment", "Komento ng MDRRMO")} · {formatDate(c.createdAt)}
+   504→                    </AlertTitle>
+   505→                    <AlertDescription>{c.comment}</AlertDescription>
+   506→                  </Alert>
+   507→                ))}
+   508→              </div>
+   509→            )}
+   510→
+   511→            <Separator className="my-5" />
+   512→
+   513→            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+   514→              {activeSection.fields.map((f) =>
+   515→                editable ? (
+   516→                  <FieldControl
+   517→                    key={f.key}
+   518→                    field={f}
+   519→                    value={values[f.key]}
+   520→                    onChange={(v) => handleChange(f.key, v)}
+   521→                    lang={lang}
+   522→                  />
+   523→                ) : (
+   524→                  <ReadonlyField key={f.key} field={f} value={values[f.key]} lang={lang} />
+   525→                )
+   526→              )}
+   527→            </div>
+   528→
+   529→            {activeSection.requiresUpload && (
+   530→              <UploadArea
+   531→                section={activeSection}
+   532→                files={files.filter((f) => f.sectionKey === activeSection.key)}
+   533→                editable={editable}
+   534→                t={t}
+   535→                onDone={() => {
+   536→                  void onReload();
+   537→                  onRefreshOverview();
+   538→                }}
+   539→              />
+   540→            )}
+   541→
+   542→            <div className="mt-8 flex items-center justify-between gap-3">
+   543→              <Button variant="outline" onClick={goPrev} disabled={activeIndex <= 0}>
+   544→                <ArrowLeft className="size-4" aria-hidden="true" />
+   545→                {t("Previous", "Nakaraan")}
+   546→              </Button>
+   547→              <Button onClick={goNext}>
+   548→                {activeIndex === sections.length - 1
+   549→                  ? t("Pre-Submission Check", "Pagsusuri Bago Isumite")
+   550→                  : t("Next Section", "Susunod na Seksyon")}
+   551→                <ArrowRight className="size-4" aria-hidden="true" />
+   552→              </Button>
+   553→            </div>
+   554→          </Card>
+   555→        ) : null}
+   556→      </div>
+   557→
+   558→      <PreviewDialog
+   559→        open={previewOpen}
+   560→        onOpenChange={setPreviewOpen}
+   561→        data={{ ...data, submission: { ...submission, values } }}
+   562→        values={values}
+   563→        barangayName={barangayName}
+   564→      />
+   565→
+   566→      {/* Submit certification dialog */}
+   567→      <Dialog open={submitOpen} onOpenChange={(o) => !submitting && setSubmitOpen(o)}>
+   568→        <DialogContent className="sm:max-w-md">
+   569→          <DialogHeader>
+   570→            <DialogTitle>
+   571→              {submission.version > 0
+   572→                ? t("Resubmit BDRRMP for Review", "Muling Isumite ang BDRRMP")
+   573→                : t("Submit BDRRMP for Review", "Isumite ang BDRRMP sa Pagsusuri")}
+   574→            </DialogTitle>
+   575→            <DialogDescription>
+   576→              {t(
+   577→                "Review your answers in the preview before submitting.",
+   578→                "Suriin ang inyong mga sagot sa preview bago magsumite."
+   579→              )}
+   580→            </DialogDescription>
+   581→          </DialogHeader>
+   582→          <div className="space-y-4">
+   583→            <div className="rounded-lg bg-muted/60 p-3 text-sm">
+   584→              <p className="font-medium">
+   585→                {t("Version", "Bersyon")}: v{submission.version + 1}
+   586→                {submission.version > 0 && ` (${t("resubmission", "muling pagsusumite")})`}
+   587→              </p>
+   588→              <p className="mt-1 text-muted-foreground">
+   589→                {t(
+   590→                  "The MDRRMO will be notified and your BDRRMP will be locked for editing while under review.",
+   591→                  "Abisuhan ang MDRRMO at maa-lock ang inyong BDRRMP habang sinusuri."
+   592→                )}
+   593→              </p>
+   594→            </div>
+   595→            <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 hover:bg-accent/50">
+   596→              <Checkbox
+   597→                checked={certified}
+   598→                onCheckedChange={(c) => setCertified(c === true)}
+   599→                className="mt-0.5"
+   600→                aria-label="Certification"
+   601→              />
+   602→              <span className="text-sm leading-snug">
+   603→                {t(
+   604→                  "I certify that the information submitted is complete and accurate to the best of my knowledge.",
+   605→                  "Ako'y nagpapatunay na ang impormasyon na isinumite ay kumpleto at tama ayon sa aking kaalaman."
+   606→                )}
+   607→                <span className="ml-0.5 text-destructive">*</span>
+   608→              </span>
+   609→            </label>
+   610→          </div>
+   611→          <DialogFooter>
+   612→            <Button variant="outline" onClick={() => setSubmitOpen(false)} disabled={submitting}>
+   613→              {t("Cancel", "Kanselahin")}
+   614→            </Button>
+   615→            <Button onClick={() => void doSubmit()} disabled={!certified || submitting}>
+   616→              {submitting && <Loader2 className="size-4 animate-spin" aria-hidden="true" />}
+   617→              {submission.version > 0
+   618→                ? t("Resubmit for Review", "Muling Isumite")
+   619→                : t("Submit for Review", "Isumite sa Pagsusuri")}
+   620→            </Button>
+   621→          </DialogFooter>
+   622→        </DialogContent>
+   623→      </Dialog>
+   624→
+   625→      {/* Success dialog */}
+   626→      <Dialog open={success !== null} onOpenChange={(o) => !o && setSuccess(null)}>
+   627→        <DialogContent className="sm:max-w-md">
+   628→          <div className="flex flex-col items-center gap-3 py-4 text-center">
+   629→            <div className="rounded-full bg-primary/10 p-3">
+   630→              <CheckCircle2 className="size-8 text-primary" aria-hidden="true" />
+   631→            </div>
+   632→            <DialogTitle>{t("Submitted!", "Naisumite na!")}</DialogTitle>
+   633→            <DialogDescription>
+   634→              {success &&
+   635→                t(
+   636→                  `The MDRRMO has been notified (version v${success.version}). You will receive a notification once the review is complete.`,
+   637→                  `Naabisuhan na ang MDRRMO (bersyon v${success.version}). Makakatanggap kayo ng abiso kapag tapos na ang pagsusuri.`
+   638→                )}
+   639→            </DialogDescription>
+   640→            <Button onClick={() => setSuccess(null)}>{t("Done", "Tapos")}</Button>
+   641→          </div>
+   642→        </DialogContent>
+   643→      </Dialog>
+   644→    </div>
+   645→  );
+   646→}
+   647→
+   648→// ---------------------------------------------------------------------------
+   649→
+   650→function StatusBanner({
+   651→  status,
+   652→  t,
+   653→}: {
+   654→  status: SubmissionStatus;
+   655→  t: (en: string, tl: string) => string;
+   656→}) {
+   657→  if (isLockedForReview(status)) {
+   658→    return (
+   659→      <Alert className="mb-4 border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-500/50 dark:bg-amber-950/40 dark:text-amber-200">
+   660→        <Lock />
+   661→        <AlertTitle>
+   662→          {t("Locked — your BDRRMP is with the MDRRMO", "Naka-lock — nasa MDRRMO ang inyong BDRRMP")}
+   663→        </AlertTitle>
+   664→        <AlertDescription className="text-amber-800 dark:text-amber-300/90">
+   665→          {t(
+   666→            "Your answers are read-only while under review. You will be notified once the MDRRMO completes its evaluation.",
+   667→            "Basahin lamang ang inyong mga sagot habang sinusuri. Abisuhan kayo kapag natapos ang pagsusuri ng MDRRMO."
+   668→          )}
+   669→        </AlertDescription>
+   670→      </Alert>
+   671→    );
+   672→  }
+   673→  if (isFinalized(status)) {
+   674→    return (
+   675→      <Alert className="mb-4 border-primary/40 bg-primary/5 text-primary dark:bg-primary/10">
+   676→        <CheckCircle2 />
+   677→        <AlertTitle>
+   678→          {t("Approved — BDRRMP finalized", "Aprubado — natapos na ang BDRRMP")}
+   679→        </AlertTitle>
+   680→        <AlertDescription>
+   681→          {t(
+   682→            "This plan is read-only. Download your signed final document from the Documents tab.",
+   683→            "Basahin lamang ang planong ito. I-download ang pinirmahang dokumento sa Documents tab."
+   684→          )}
+   685→        </AlertDescription>
+   686→      </Alert>
+   687→    );
+   688→  }
+   689→  if (status === "NEEDS_REVISION") {
+   690→    return (
+   691→      <Alert variant="destructive" className="mb-4">
+   692→        <AlertTriangle />
+   693→        <AlertTitle>
+   694→          {t(
+   695→            "MDRRMO requested revisions — please correct the flagged sections and resubmit",
+   696→            "Humingi ng pagbabago ang MDRRMO — ayusin ang mga na-flag na seksyon at isumite muli"
+   697→          )}
+   698→        </AlertTitle>
+   699→        <AlertDescription>
+   700→          {t(
+   701→            "Sections with reviewer comments are marked with a red outline in the section list.",
+   702→            "Ang mga seksyong may komento ng tagasuri ay may pulang bilog sa listahan."
+   703→          )}
+   704→        </AlertDescription>
+   705→      </Alert>
+   706→    );
+   707→  }
+   708→  return null;
+   709→}
+   710→
+   711→function SaveIndicator({
+   712→  state,
+   713→  onRetry,
+   714→  savingLabel,
+   715→  savedLabel,
+   716→  pendingLabel,
+   717→}: {
+   718→  state: SaveState;
+   719→  onRetry: () => void;
+   720→  savingLabel: string;
+   721→  savedLabel: string;
+   722→  pendingLabel: string;
+   723→}) {
+   724→  if (state === "idle") return null;
+   725→  if (state === "saving")
+   726→    return (
+   727→      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+   728→        <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+   729→        {savingLabel}
+   730→      </span>
+   731→    );
+   732→  if (state === "pending")
+   733→    return (
+   734→      <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+   735→        <PencilLine className="size-3.5" aria-hidden="true" />
+   736→        {pendingLabel}
+   737→      </span>
+   738→    );
+   739→  if (state === "saved")
+   740→    return (
+   741→      <span className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-primary">
+   742→        <Check className="size-3.5" aria-hidden="true" />
+   743→        {savedLabel}
+   744→      </span>
+   745→    );
+   746→  return (
+   747→    <span className="flex shrink-0 items-center gap-1.5 text-xs text-destructive">
+   748→      <AlertTriangle className="size-3.5" aria-hidden="true" />
+   749→      Save failed
+   750→      <button type="button" onClick={onRetry} className="font-medium underline underline-offset-2">
+   751→        Retry
+   752→      </button>
+   753→    </span>
+   754→  );
+   755→}
+   756→
+   757→function PreCheckPanel({
+   758→  validation,
+   759→  progress,
+   760→  editable,
+   761→  checking,
+   762→  t,
+   763→  onRecheck,
+   764→  onGoSection,
+   765→  onBack,
+   766→  onPreview,
+   767→  onSubmit,
+   768→}: {
+   769→  validation: BarangaySubmissionData["validation"];
+   770→  progress: number;
+   771→  editable: boolean;
+   772→  checking: boolean;
+   773→  t: (en: string, tl: string) => string;
+   774→  onRecheck: () => void;
+   775→  onGoSection: (key: string) => void;
+   776→  onBack: () => void;
+   777→  onPreview: () => void;
+   778→  onSubmit: () => void;
+   779→}) {
+   780→  return (
+   781→    <Card className="p-4 sm:p-6">
+   782→      <div className="flex flex-wrap items-start justify-between gap-3">
+   783→        <div className="flex items-start gap-3">
+   784→          <div className="rounded-lg bg-primary/10 p-2">
+   785→            <ClipboardCheck className="size-5 text-primary" aria-hidden="true" />
+   786→          </div>
+   787→          <div>
+   788→            <h2 className="text-lg font-semibold">{t("Pre-Submission Check", "Pagsusuri Bago Isumite")}</h2>
+   789→            <p className="text-sm text-muted-foreground">
+   790→              {t(
+   791→                "Make sure every requirement is complete before submitting to the MDRRMO.",
+   792→                "Siguraduhing kumpleto ang bawat kailangan bago isumite sa MDRRMO."
+   793→              )}
+   794→            </p>
+   795→          </div>
+   796→        </div>
+   797→        <Button variant="outline" size="sm" onClick={onRecheck} disabled={checking}>
+   798→          <RefreshCw className={cn("size-4", checking && "animate-spin")} aria-hidden="true" />
+   799→          {t("Recheck", "Suriin Muli")}
+   800→        </Button>
+   801→      </div>
+   802→
+   803→      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+   804→        <div className="rounded-lg border p-3">
+   805→          <p className="text-xs text-muted-foreground">{t("Sections completed", "Natapos na seksyon")}</p>
+   806→          <p className="mt-1 text-xl font-bold tabular-nums">
+   807→            {validation.completedSections}
+   808→            <span className="text-sm font-normal text-muted-foreground"> / {validation.totalSections}</span>
+   809→          </p>
+   810→        </div>
+   811→        <div className="rounded-lg border p-3">
+   812→          <p className="text-xs text-muted-foreground">{t("Outstanding issues", "Mga suliranin")}</p>
+   813→          <p className="mt-1 text-xl font-bold tabular-nums">{validation.issues.length}</p>
+   814→        </div>
+   815→        <div className="rounded-lg border p-3">
+   816→          <p className="text-xs text-muted-foreground">{t("Progress", "Progreso")}</p>
+   817→          <p className="mt-1 text-xl font-bold tabular-nums">{progress}%</p>
+   818→        </div>
+   819→      </div>
+   820→
+   821→      {validation.ready ? (
+   822→        <Alert className="mt-5 border-primary/40 bg-primary/5 text-primary dark:bg-primary/10">
+   823→          <CheckCircle2 />
+   824→          <AlertTitle>
+   825→            {t("All requirements complete — READY FOR SUBMISSION", "Kumpleto ang lahat — HANDA NANG ISUMITE")}
+   826→          </AlertTitle>
+   827→          <AlertDescription>
+   828→            {t(
+   829→              "Preview your document, then submit it for MDRRMO review.",
+   830→              "I-preview ang dokumento, pagkatapos ay isumite sa pagsusuri ng MDRRMO."
+   831→            )}
+   832→          </AlertDescription>
+   833→        </Alert>
+   834→      ) : (
+   835→        <div className="mt-5 space-y-2">
+   836→          <p className="text-sm font-medium">
+   837→            {t("Issues that need your attention", "Mga suliranin na kailangang ayusin")}:
+   838→          </p>
+   839→          <ul className="space-y-2">
+   840→            {validation.issues.map((issue) => (
+   841→              <li key={issue.sectionKey}>
+   842→                <button
+   843→                  type="button"
+   844→                  onClick={() => onGoSection(issue.sectionKey)}
+   845→                  className="flex w-full items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-left transition-colors hover:bg-amber-100/70 dark:border-amber-500/40 dark:bg-amber-950/30"
+   846→                >
+   847→                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden="true" />
+   848→                  <span className="min-w-0">
+   849→                    <span className="block text-sm font-medium">{issue.sectionTitle}</span>
+   850→                    <span className="block text-xs text-muted-foreground">{issue.reason}</span>
+   851→                  </span>
+   852→                  <ChevronRight className="ml-auto mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+   853→                </button>
+   854→              </li>
+   855→            ))}
+   856→          </ul>
+   857→        </div>
+   858→      )}
+   859→
+   860→      <div className="mt-6 flex flex-wrap items-center gap-3">
+   861→        <Button variant="outline" onClick={onBack}>
+   862→          <ArrowLeft className="size-4" aria-hidden="true" />
+   863→          {t("Back to Sections", "Bumalik sa mga Seksyon")}
+   864→        </Button>
+   865→        <Button variant="outline" onClick={onPreview}>
+   866→          <FileText className="size-4" aria-hidden="true" />
+   867→          {t("Preview BDRRMP", "I-preview ang BDRRMP")}
+   868→        </Button>
+   869→        {editable && (
+   870→          <Button onClick={onSubmit} disabled={!validation.ready}>
+   871→            <CheckCircle2 className="size-4" aria-hidden="true" />
+   872→            {t("Submit for Review", "Isumite sa Pagsusuri")}
+   873→          </Button>
+   874→        )}
+   875→        {!validation.ready && (
+   876→          <p className="text-xs text-muted-foreground">
+   877→            {t(
+   878→              "The submit button unlocks once all requirements are complete.",
+   879→              "Bubuksan ang pindutan ng pagsusumite kapag kumpleto na ang lahat."
+   880→            )}
+   881→          </p>
+   882→        )}
+   883→      </div>
+   884→    </Card>
+   885→  );
+   886→}
+   887→
+   888→function UploadArea({
+   889→  section,
+   890→  files,
+   891→  editable,
+   892→  t,
+   893→  onDone,
+   894→}: {
+   895→  section: ClientSection;
+   896→  files: FileMeta[];
+   897→  editable: boolean;
+   898→  t: (en: string, tl: string) => string;
+   899→  onDone: () => void;
+   900→}) {
+   901→  const { toast } = useToast();
+   902→  const inputRef = useRef<HTMLInputElement>(null);
+   903→  const [uploading, setUploading] = useState(false);
+   904→  const [dragOver, setDragOver] = useState(false);
+   905→  const [deletingId, setDeletingId] = useState<string | null>(null);
+   906→
+   907→  async function handleFile(file: File) {
+   908→    const ext = (file.name.split(".").pop() || "").toLowerCase();
+   909→    if (!section.uploadFormats.includes(ext)) {
+   910→      toast({
+   911→        variant: "destructive",
+   912→        title: t("Invalid file type", "Maling uri ng file"),
+   913→        description: `".${ext}" — ${t("accepted", "tanggap")}: ${section.uploadFormats.map((f) => f.toUpperCase()).join(", ")}`,
+   914→      });
+   915→      return;
+   916→    }
+   917→    if (file.size > section.uploadMaxMB * 1024 * 1024) {
+   918→      toast({
+   919→        variant: "destructive",
+   920→        title: t("File too large", "Masyadong malaki ang file"),
+   921→        description: `${formatFileSize(file.size)} — ${t("maximum", "hanggang")} ${section.uploadMaxMB} MB.`,
+   922→      });
+   923→      return;
+   924→    }
+   925→    setUploading(true);
+   926→    try {
+   927→      await api.uploadFile(section.key, file);
+   928→      toast({
+   929→        title: t("File uploaded", "Nai-upload ang file"),
+   930→        description: `${file.name} — ${t("pending MDRRMO review", "naka-queue sa pagsusuri ng MDRRMO")}.`,
+   931→      });
+   932→      onDone();
+   933→    } catch (e) {
+   934→      toast({ variant: "destructive", title: t("Upload failed", "Nabigo ang upload"), description: errMsg(e) });
+   935→    } finally {
+   936→      setUploading(false);
+   937→      if (inputRef.current) inputRef.current.value = "";
+   938→    }
+   939→  }
+   940→
+   941→  async function handleDelete(id: string) {
+   942→    setDeletingId(id);
+   943→    try {
+   944→      await api.deleteFile(id);
+   945→      toast({ title: t("File deleted", "Nabura ang file") });
+   946→      onDone();
+   947→    } catch (e) {
+   948→      toast({ variant: "destructive", title: t("Delete failed", "Nabigo ang pagbura"), description: errMsg(e) });
+   949→    } finally {
+   950→      setDeletingId(null);
+   951→    }
+   952→  }
+   953→
+   954→  return (
+   955→    <div className="mt-6">
+   956→      <div className="flex items-center gap-2">
+   957→        <Paperclip className="size-4 shrink-0 text-primary" aria-hidden="true" />
+   958→        <h3 className="text-sm font-semibold">
+   959→          {section.uploadLabel || t("Required attachment", "Kinakailangang kalakip")}
+   960→          {section.required && <span className="ml-0.5 text-destructive">*</span>}
+   961→        </h3>
+   962→      </div>
+   963→
+   964→      {editable ? (
+   965→        <div
+   966→          role="button"
+   967→          tabIndex={0}
+   968→          aria-label={t("Upload file", "Mag-upload ng file")}
+   969→          onClick={() => inputRef.current?.click()}
+   970→          onKeyDown={(e) => {
+   971→            if (e.key === "Enter" || e.key === " ") {
+   972→              e.preventDefault();
+   973→              inputRef.current?.click();
+   974→            }
+   975→          }}
+   976→          onDragOver={(e) => {
+   977→            e.preventDefault();
+   978→            setDragOver(true);
+   979→          }}
+   980→          onDragLeave={() => setDragOver(false)}
+   981→          onDrop={(e) => {
+   982→            e.preventDefault();
+   983→            setDragOver(false);
+   984→            const f = e.dataTransfer.files?.[0];
+   985→            if (f) void handleFile(f);
+   986→          }}
+   987→          className={cn(
+   988→            "mt-2 flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border-2 border-dashed p-6 text-center transition-colors",
+   989→            dragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-accent/40",
+   990→            uploading && "pointer-events-none opacity-60"
+   991→          )}
+   992→        >
+   993→          {uploading ? (
+   994→            <Loader2 className="size-6 animate-spin text-primary" aria-hidden="true" />
+   995→          ) : (
+   996→            <UploadCloud className="size-6 text-muted-foreground" aria-hidden="true" />
+   997→          )}
+   998→          <p className="text-sm font-medium">
+   999→            {uploading
+  1000→              ? t("Uploading…", "Nag-a-upload…")
+  1001→              : t("Drag & drop a file here, or click to browse", "Hilahin ang file dito, o i-click para mag-browse")}
+  1002→          </p>
+  1003→          <p className="text-xs text-muted-foreground">
+  1004→            {t("Accepted", "Tinatanggap")}: {section.uploadFormats.map((f) => f.toUpperCase()).join(", ")} ·{" "}
+  1005→            {t("Max", "Hanggang")} {section.uploadMaxMB} MB
+  1006→          </p>
+  1007→          <input
+  1008→            ref={inputRef}
+  1009→            type="file"
+  1010→            className="hidden"
+  1011→            accept={section.uploadFormats.map((f) => `.${f}`).join(",")}
+  1012→            onChange={(e) => {
+  1013→              const f = e.target.files?.[0];
+  1014→              if (f) void handleFile(f);
+  1015→            }}
+  1016→          />
+  1017→        </div>
+  1018→      ) : (
+  1019→        <p className="mt-2 rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+  1020→          <Lock className="mr-1 inline size-3" aria-hidden="true" />
+  1021→          {t("Uploads are locked while under review or approved.", "Naka-lock ang upload habang sinusuri o aprubado.")}
+  1022→        </p>
+  1023→      )}
+  1024→
+  1025→      {files.length > 0 && (
+  1026→        <ul className="mt-3 space-y-2">
+  1027→          {files.map((f) => (
+  1028→            <li key={f.id} className="flex items-center gap-3 rounded-lg border p-3">
+  1029→              <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+  1030→              <div className="min-w-0 flex-1">
+  1031→                <p className="truncate text-sm font-medium">{f.filename}</p>
+  1032→                <p className="text-xs text-muted-foreground">
+  1033→                  {formatFileSize(f.size)} · {t("uploaded", "ina-upload")} {formatDate(f.uploadedAt)} · v{f.version}
+  1034→                </p>
+  1035→              </div>
+  1036→              <FileStatusBadge status={f.status} />
+  1037→              {editable && (
+  1038→                <AlertDialog>
+  1039→                  <AlertDialogTrigger asChild>
+  1040→                    <Button
+  1041→                      variant="ghost"
+  1042→                      size="icon"
+  1043→                      className="shrink-0 text-muted-foreground hover:text-destructive"
+  1044→                      aria-label={t("Delete file", "Burahin ang file")}
+  1045→                      disabled={deletingId === f.id}
+  1046→                    >
+  1047→                      {deletingId === f.id ? (
+  1048→                        <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+  1049→                      ) : (
+  1050→                        <Trash2 className="size-4" aria-hidden="true" />
+  1051→                      )}
+  1052→                    </Button>
+  1053→                  </AlertDialogTrigger>
+  1054→                  <AlertDialogContent>
+  1055→                    <AlertDialogHeader>
+  1056→                      <AlertDialogTitle>{t("Delete this file?", "Burahin ang file na ito?")}</AlertDialogTitle>
+  1057→                      <AlertDialogDescription>
+  1058→                        {t(
+  1059→                          `"${f.filename}" will be permanently removed.`,
+  1060→                          `"${f.filename}" ay tuluyang mabubura.`
+  1061→                        )}
+  1062→                      </AlertDialogDescription>
+  1063→                    </AlertDialogHeader>
+  1064→                    <AlertDialogFooter>
+  1065→                      <AlertDialogCancel>{t("Cancel", "Kanselahin")}</AlertDialogCancel>
+  1066→                      <AlertDialogAction
+  1067→                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+  1068→                        onClick={() => void handleDelete(f.id)}
+  1069→                      >
+  1070→                        {t("Delete", "Burahin")}
+  1071→                      </AlertDialogAction>
+  1072→                    </AlertDialogFooter>
+  1073→                  </AlertDialogContent>
+  1074→                </AlertDialog>
+  1075→              )}
+  1076→            </li>
+  1077→          ))}
+  1078→        </ul>
+  1079→      )}
+  1080→    </div>
+  1081→  );
+  1082→}
+  1083→

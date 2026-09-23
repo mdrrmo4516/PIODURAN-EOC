@@ -1,0 +1,280 @@
+// QAS33 client-side API helpers
+import type {
+  SessionInfo,
+  BarangayOverview,
+  BarangaySubmissionData,
+  AdminBarangayRow,
+  AdminSubmissionRow,
+  AdminSubmissionDetail,
+  AdminOverviewStats,
+  AuditEntry,
+  NotificationItem,
+  CommentItem,
+  SettingValues,
+  TutorialItem,
+} from "./types";
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    ...init,
+    headers: init?.body instanceof FormData ? init?.headers : { "Content-Type": "application/json", ...(init?.headers || {}) },
+    cache: "no-store",
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error((data as { error?: string }).error || `Request failed (${res.status})`);
+  }
+  return data as T;
+}
+
+export const api = {
+  // ---- auth ----
+  me: () => request<{ session: SessionInfo | null }>("/api/auth/me"),
+  loginBarangay: (code: string, pin: string) =>
+    request<{ role: string; mustChangePin?: boolean }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ role: "barangay", code, pin }),
+    }),
+  loginAdmin: (username: string, password: string) =>
+    request<{ role: string }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ role: "admin", username, password }),
+    }),
+  logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
+  changePin: (currentPin: string, newPin: string, confirmPin: string) =>
+    request<{ ok: boolean }>("/api/auth/change-pin", {
+      method: "POST",
+      body: JSON.stringify({ currentPin, newPin, confirmPin }),
+    }),
+
+  // ---- barangay ----
+  overview: () => request<BarangayOverview>("/api/barangay/overview"),
+  submission: () => request<BarangaySubmissionData>("/api/barangay/submission"),
+  saveValues: (values: Record<string, unknown>) =>
+    request<{ ok: boolean; progress: number; status: string }>("/api/barangay/submission", {
+      method: "PUT",
+      body: JSON.stringify({ values }),
+    }),
+  selectTemplate: (lang: string) =>
+    request<{ ok: boolean; templateLang: string }>("/api/barangay/submission", {
+      method: "POST",
+      body: JSON.stringify({ action: "select-template", lang }),
+    }),
+  uploadFile: (sectionKey: string, file: File) => {
+    const form = new FormData();
+    form.append("sectionKey", sectionKey);
+    form.append("file", file);
+    return request<{ ok: boolean; progress: number; status: string }>("/api/barangay/files", {
+      method: "POST",
+      body: form,
+    });
+  },
+  deleteFile: (fileId: string) =>
+    request<{ ok: boolean; progress: number; status: string }>(`/api/barangay/files?fileId=${fileId}`, {
+      method: "DELETE",
+    }),
+  submit: (certified: boolean) =>
+    request<{ ok: boolean; version: number; status: string }>("/api/barangay/submit", {
+      method: "POST",
+      body: JSON.stringify({ certified }),
+    }),
+  comments: () => request<{ comments: CommentItem[] }>("/api/barangay/comments"),
+  document: () =>
+    request<{
+      document: {
+        docId: string;
+        version: number;
+        lang: string;
+        signed: boolean;
+        signedBy: string | null;
+        signedAt: string | null;
+        signatureHash: string | null;
+        generatedAt: string;
+        downloadCount: number;
+        downloads: Array<{ id: string; downloadedBy: string; ip: string | null; createdAt: string }>;
+      };
+      submission: { status: string; approvedAt: string | null };
+    }>("/api/barangay/document"),
+  notifications: () =>
+    request<{ notifications: NotificationItem[]; unread: number }>("/api/barangay/notifications"),
+  markNotificationsRead: (ids?: string[]) =>
+    request<{ ok: boolean }>("/api/barangay/notifications", {
+      method: "POST",
+      body: JSON.stringify(ids ? { ids } : { all: true }),
+    }),
+  history: () =>
+    request<{
+      versions: Array<{ version: number; submittedAt: string; note: string | null }>;
+      reviews: Array<{
+        id: string;
+        action: string;
+        reviewerName: string;
+        overallComment: string | null;
+        createdAt: string;
+        version: number;
+        commentCount: number;
+      }>;
+      currentStatus: string;
+      currentVersion: number;
+    }>("/api/barangay/history"),
+  tutorials: () => request<{ lang: string; tutorials: TutorialItem[] }>("/api/barangay/tutorials"),
+
+  // ---- admin ----
+  adminOverview: () =>
+    request<{
+      stats: AdminOverviewStats;
+      year: number;
+      recentActivity: AuditEntry[];
+    }>("/api/admin/overview"),
+  adminBarangays: (search = "", status = "ALL") =>
+    request<{ barangays: AdminBarangayRow[]; year: number }>(
+      `/api/admin/barangays?search=${encodeURIComponent(search)}&status=${status}`
+    ),
+  adminBarangayAction: (id: string, action: string) =>
+    request<{ ok: boolean; tempPin?: string; message?: string; active?: boolean }>(`/api/admin/barangays/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    }),
+  adminSubmissions: (search = "", status = "ALL") =>
+    request<{ submissions: AdminSubmissionRow[]; year: number }>(
+      `/api/admin/submissions?search=${encodeURIComponent(search)}&status=${status}`
+    ),
+  adminSubmission: (id: string) => request<AdminSubmissionDetail>(`/api/admin/submissions/${id}`),
+  adminReview: (id: string, payload: Record<string, unknown>) =>
+    request<{ ok: boolean; status?: string; maxTotal?: number }>(`/api/admin/submissions/${id}/review`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  adminRating: (id: string, scores: Record<string, number>, remarks?: string) =>
+    request<{ ok: boolean }>(`/api/admin/submissions/${id}/rating`, {
+      method: "POST",
+      body: JSON.stringify({ scores, remarks }),
+    }),
+  adminFinalize: (id: string, signedBy?: string, position?: string) =>
+    request<{ ok: boolean; docId: string; signedBy: string; size: number; verifyUrl: string }>(
+      `/api/admin/submissions/${id}/finalize`,
+      { method: "POST", body: JSON.stringify({ signedBy, position }) }
+    ),
+  adminReports: () =>
+    request<{
+      year: number;
+      rows: Array<{
+        code: string;
+        barangay: string;
+        captain: string;
+        status: string;
+        progress: number;
+        version: number;
+        template: string;
+        lastSubmitted: string;
+        approvedAt: string;
+        rating: number | null;
+        docId: string;
+        downloads: number;
+      }>;
+      counts: Record<string, number>;
+      totals: { barangays: number; submitted: number; approved: number; avgRating: number | null };
+    }>("/api/admin/reports"),
+  adminAudit: (search = "", actor = "", offset = 0) =>
+    request<{ entries: AuditEntry[]; total: number }>(
+      `/api/admin/audit?search=${encodeURIComponent(search)}&actor=${actor}&limit=100&offset=${offset}`
+    ),
+  adminNotifications: () =>
+    request<{ notifications: NotificationItem[]; unread: number }>("/api/admin/notifications"),
+  adminMarkNotificationsRead: (ids?: string[]) =>
+    request<{ ok: boolean }>("/api/admin/notifications", {
+      method: "POST",
+      body: JSON.stringify(ids ? { ids } : { all: true }),
+    }),
+  adminSettings: () =>
+    request<{
+      settings: SettingValues;
+      criteria: Array<{ id: string; key: string; name: string; maxScore: number; order: number; active: boolean }>;
+      users: Array<{
+        id: string;
+        username: string;
+        name: string;
+        position: string | null;
+        role: string;
+        active: boolean;
+        lastLoginAt: string | null;
+      }>;
+    }>("/api/admin/settings"),
+  adminSaveSettings: (payload: Record<string, unknown>) =>
+    request<{ ok: boolean }>("/api/admin/settings", { method: "PUT", body: JSON.stringify(payload) }),
+  adminTutorials: () =>
+    request<{
+      tutorials: Array<{
+        key: string;
+        titleEn: string;
+        titleTl: string;
+        bodyEn: string;
+        bodyTl: string;
+        order: number;
+        active: boolean;
+      }>;
+    }>("/api/admin/tutorials"),
+  adminUpdateTutorial: (payload: Record<string, unknown>) =>
+    request<{ ok: boolean }>("/api/admin/tutorials", { method: "PUT", body: JSON.stringify(payload) }),
+  adminRequirements: () =>
+    request<{
+      sections: Array<{
+        key: string;
+        order: number;
+        titleEn: string;
+        titleTl: string;
+        descEn: string | null;
+        descTl: string | null;
+        requiresUpload: boolean;
+        uploadLabelEn: string | null;
+        uploadLabelTl: string | null;
+        uploadFormats: string[];
+        uploadMaxMB: number;
+        required: boolean;
+        active: boolean;
+        fieldCount: number;
+      }>;
+    }>("/api/admin/requirements"),
+  adminUpdateRequirement: (payload: Record<string, unknown>) =>
+    request<{ ok: boolean }>("/api/admin/requirements", { method: "PUT", body: JSON.stringify(payload) }),
+
+  // ---- public ----
+  verify: (docId: string) =>
+    request<{
+      valid: boolean;
+      error?: string;
+      docId?: string;
+      document?: string;
+      barangay?: string;
+      year?: number;
+      version?: number;
+      status?: string;
+      signed?: boolean;
+      signedBy?: string;
+      signedAt?: string | null;
+      approvedAt?: string | null;
+      generatedAt?: string;
+      downloadCount?: number;
+    }>(`/api/verify?docId=${encodeURIComponent(docId)}`),
+};
+
+// Label helper for fields (used across barangay + admin UI)
+export function fieldLabel(field: { labelEn: string; labelTl: string }, lang: string | null | undefined): string {
+  return lang === "TL" ? field.labelTl : field.labelEn;
+}
+
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-PH", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleDateString("en-PH", { year: "numeric", month: "short", day: "numeric" });
+}
