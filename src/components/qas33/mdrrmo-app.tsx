@@ -10,6 +10,7 @@ import {
   ClipboardList,
   Database,
   FolderOpen,
+  IdCard,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -28,6 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import MdrrmoAudit from "./mdrrmo-audit";
 import MdrrmoBarangays from "./mdrrmo-barangays";
+import MdrrmoCredentials from "./mdrrmo-credentials";
 import MdrrmoDatabase from "./mdrrmo-database";
 import MdrrmoDashboard from "./mdrrmo-dashboard";
 import MdrrmoNotifications from "./mdrrmo-notifications";
@@ -43,6 +45,7 @@ import FileLibrary from "./file-library";
 type ViewKey =
   | "dashboard"
   | "barangays"
+  | "credentials"
   | "queue"
   | "requirements"
   | "tutorials"
@@ -60,6 +63,7 @@ const SYSADMIN_ONLY_KEYS: ReadonlySet<ViewKey> = new Set(["users", "settings", "
 const NAV: { key: ViewKey; label: string; icon: typeof Bell }[] = [
   { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { key: "barangays", label: "Barangays", icon: Building2 },
+  { key: "credentials", label: "Credentials", icon: IdCard },
   { key: "queue", label: "Review Queue", icon: ClipboardList },
   { key: "requirements", label: "References", icon: ListChecks },
   { key: "tutorials", label: "Tutorials", icon: BookOpen },
@@ -255,6 +259,8 @@ export default function MdrrmoApp({ session, onLogout }: { session: SessionInfo;
             <MdrrmoDashboard refreshKey={dataVersion} />
           ) : view === "barangays" ? (
             <MdrrmoBarangays onOpenSubmission={openDetail} refreshKey={dataVersion} />
+          ) : view === "credentials" ? (
+            <MdrrmoCredentials session={session} />
           ) : view === "queue" ? (
             <MdrrmoQueue onOpen={openDetail} refreshKey={dataVersion} />
           ) : view === "requirements" ? (

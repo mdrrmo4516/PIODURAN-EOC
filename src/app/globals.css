@@ -120,3 +120,42 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ---- QAS33 printable barangay account credential sheets ---- */
+@media print {
+  @page {
+    margin: 10mm;
+  }
+
+  /* While the credential overlay is open, hide the whole app except the portal */
+  body.qas33-printing > *:not(#qas33-print-portal) {
+    display: none !important;
+  }
+
+  #qas33-print-portal {
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+    display: block !important;
+    background: #ffffff !important;
+    backdrop-filter: none !important;
+  }
+
+  .qas33-credential-sheet {
+    box-shadow: none !important;
+    max-width: none !important;
+    padding: 0 !important; /* @page margin handles spacing */
+  }
+
+  .qas33-credential-sheet.qas33-sheet-page-break {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  /* Keep the official header bar / badges colored on paper */
+  #qas33-print-portal,
+  #qas33-print-portal * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

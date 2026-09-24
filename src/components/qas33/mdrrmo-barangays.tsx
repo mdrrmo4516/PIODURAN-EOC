@@ -10,6 +10,7 @@ import {
   KeyRound,
   Lock,
   MoreHorizontal,
+  Printer,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -56,6 +57,7 @@ import { api, formatDate } from "@/lib/qas33/api";
 import { SUBMISSION_STATUSES, type AdminBarangayRow } from "@/lib/qas33/types";
 import { cn } from "@/lib/utils";
 import { ErrorAlert, StatusBadge, TableSkeleton, useDebounced, useLoad } from "./mdrrmo-shared";
+import { useCredentialPrinter } from "./credential-print";
 
 type BarangaysData = Awaited<ReturnType<typeof api.adminBarangays>>;
 type ConfirmKind = "revoke-pin" | "activate-pin" | "clear-lock" | "toggle-active";
@@ -72,13 +74,14 @@ export default function MdrrmoBarangays({
   const debouncedSearch = useDebounced(search);
   const [status, setStatus] = useState("ALL");
   const [busy, setBusy] = useState(false);
-  const [pinDialog, setPinDialog] = useState<{ code: string; name: string; pin: string } | null>(null);
+  const [pinDialog, setPinDialog] = useState<{ code: string; name: string; pin: string; row: AdminBarangayRow } | null>(null);
   const [confirm, setConfirm] = useState<{ kind: ConfirmKind; row: AdminBarangayRow } | null>(null);
 
   const { data, loading, error, reload } = useLoad<BarangaysData>(
     () => api.adminBarangays(debouncedSearch, status),
     `${debouncedSearch}|${status}|${refreshKey}`
   );
+  const printer = useCredentialPrinter(reload);
 
   const rows = data?.barangays ?? [];
 
@@ -87,7 +90,7 @@ export default function MdrrmoBarangays({
     try {
       const res = await api.adminBarangayAction(row.id, action);
       if (action === "reset-pin" || action === "generate-pin") {
-        if (res.tempPin) setPinDialog({ code: row.code, name: row.name, pin: res.tempPin });
+        if (res.tempPin) setPinDialog({ code: row.code, name: row.name, pin: res.tempPin, row });
       }
       toast({ title: successTitle, description: `Barangay ${row.name} (${row.code})` });
       reload();
@@ -136,6 +139,9 @@ export default function MdrrmoBarangays({
           <h1 className="text-xl font-semibold tracking-tight">Barangays</h1>
           <p className="text-sm text-muted-foreground">Monitor progress and manage access credentials of the 33 barangays</p>
         </div>
+        <Button variant="outline" className="gap-1.5" onClick={() => printer.printAll(rows)} disabled={loading || printer.busy}>
+          <Printer className="h-4 w-4" aria-hidden="true" /> Print Credentials
+        </Button>
       </header>
 
       <Card>
@@ -202,7 +208,7 @@ export default function MdrrmoBarangays({
                     </TableRow>
                   )}
                   {rows.map((row) => (
-                    <BarangayRow key={row.id} row={row} busy={busy} onView={() => onOpenSubmission(row.submission?.id ?? "")} onAction={runAction} setConfirm={setConfirm} />
+                    <BarangayRow key={row.id} row={row} busy={busy} onView={() => onOpenSubmission(row.submission?.id ?? "")} onAction={runAction} setConfirm={setConfirm} onPrint={(r) => void printer.printOne(r)} />
                   ))}
                 </TableBody>
               </Table>
@@ -241,7 +247,21 @@ export default function MdrrmoBarangays({
           <p className="rounded-lg bg-amber-50 dark:bg-amber-950/40 p-3 text-xs text-amber-800 dark:text-amber-300">
             Shown only once — the barangay must change it on first login.
           </p>
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => {
+                if (pinDialog) {
+                  const row = pinDialog.row;
+                  setPinDialog(null);
+                  void printer.printOne(row); // pending PIN → sheet reuses it (issued-by from server)
+                }
+              }}
+            >
+              <Printer className="h-4 w-4" aria-hidden="true" /> Print Credential Sheet
+            </Button>
             <Button onClick={() => setPinDialog(null)}>Done</Button>
           </DialogFooter>
         </DialogContent>
@@ -282,6 +302,9 @@ export default function MdrrmoBarangays({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Printable credential sheets (overlay + confirm dialogs) */}
+      {printer.overlay}
     </div>
   );
 }
@@ -292,12 +315,14 @@ function BarangayRow({
   onView,
   onAction,
   setConfirm,
+  onPrint,
 }: {
   row: AdminBarangayRow;
   busy: boolean;
   onView: () => void;
   onAction: (row: AdminBarangayRow, action: string, successTitle: string) => void;
   setConfirm: (c: { kind: ConfirmKind; row: AdminBarangayRow } | null) => void;
+  onPrint: (row: AdminBarangayRow) => void;
 }) {
   const cred = row.credential;
   const locked = !!(cred?.lockedUntil && new Date(cred.lockedUntil).getTime() > Date.now());
@@ -366,6 +391,9 @@ function BarangayRow({
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem onClick={onView}>
               <Eye className="h-4 w-4" /> View Submission
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onPrint(row)}>
+              <Printer className="h-4 w-4" /> Print Credential
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => onAction(row, "reset-pin", hasCred ? "PIN reset" : "PIN generated")}>

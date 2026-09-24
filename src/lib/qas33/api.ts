@@ -14,6 +14,7 @@ import type {
   TutorialItem,
   FileLibraryResponse,
   FileLibraryItem,
+  CredentialsPrintResponse,
 } from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -136,6 +137,16 @@ export const api = {
     request<{ ok: boolean; tempPin?: string; message?: string; active?: boolean }>(`/api/admin/barangays/${id}`, {
       method: "POST",
       body: JSON.stringify({ action }),
+    }),
+  // Printable barangay account credential sheets (all console roles)
+  adminPrintCredentials: (
+    payload:
+      | { mode: "one"; barangayId: string; regenerate?: boolean }
+      | { mode: "all"; regenerate: "pending" | "missing" | "all" }
+  ) =>
+    request<CredentialsPrintResponse>("/api/admin/credentials", {
+      method: "POST",
+      body: JSON.stringify(payload),
     }),
   adminSubmissions: (search = "", status = "ALL") =>
     request<{ submissions: AdminSubmissionRow[]; year: number }>(

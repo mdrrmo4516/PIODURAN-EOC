@@ -154,6 +154,7 @@ export async function listBarangayRows(search: string, statusFilter: string, yea
         ? {
             active: b.credential.active,
             mustChangePin: b.credential.mustChangePin,
+            tempPinPending: Boolean(b.credential.tempPin),
             lockedUntil: b.credential.lockedUntil?.toISOString() ?? null,
             lastLoginAt: b.credential.lastLoginAt?.toISOString() ?? null,
           }

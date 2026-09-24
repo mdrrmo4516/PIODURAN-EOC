@@ -1,0 +1,1039 @@
+     1→"use client";
+     2→
+     3→// QAS33 — Users (SYSTEM_ADMIN only): ALL user accounts in one place.
+     4→// Tab 1 "Console Users": MDRRMO console accounts + role assignment (the only
+     5→//   place roles can be changed — /api/admin/users).
+     6→// Tab 2 "Barangay Accounts": the 33 barangay login accounts — access PIN
+     7→//   lifecycle (reset / revoke / reactivate), lockout clearing and enable /
+     8→//   disable, via the /api/admin/barangays credential actions.
+     9→
+    10→import { useState } from "react";
+    11→import {
+    12→  Ban,
+    13→  CheckCircle2,
+    14→  KeyRound,
+    15→  Loader2,
+    16→  Lock,
+    17→  LockOpen,
+    18→  MoreHorizontal,
+    19→  Pencil,
+    20→  Search,
+    21→  ShieldCheck,
+    22→  Trash2,
+    23→  UserPlus,
+    24→  Users as UsersIcon,
+    25→  Building2,
+    26→} from "lucide-react";
+    27→import type { LucideIcon } from "lucide-react";
+    28→import {
+    29→  AlertDialog,
+    30→  AlertDialogAction,
+    31→  AlertDialogCancel,
+    32→  AlertDialogContent,
+    33→  AlertDialogDescription,
+    34→  AlertDialogFooter,
+    35→  AlertDialogHeader,
+    36→  AlertDialogTitle,
+    37→} from "@/components/ui/alert-dialog";
+    38→import { Button } from "@/components/ui/button";
+    39→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    40→import {
+    41→  Dialog,
+    42→  DialogContent,
+    43→  DialogDescription,
+    44→  DialogFooter,
+    45→  DialogHeader,
+    46→  DialogTitle,
+    47→} from "@/components/ui/dialog";
+    48→import {
+    49→  DropdownMenu,
+    50→  DropdownMenuContent,
+    51→  DropdownMenuItem,
+    52→  DropdownMenuSeparator,
+    53→  DropdownMenuTrigger,
+    54→} from "@/components/ui/dropdown-menu";
+    55→import { Input } from "@/components/ui/input";
+    56→import { Label } from "@/components/ui/label";
+    57→import {
+    58→  Select,
+    59→  SelectContent,
+    60→  SelectItem,
+    61→  SelectTrigger,
+    62→  SelectValue,
+    63→} from "@/components/ui/select";
+    64→import { Switch } from "@/components/ui/switch";
+    65→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+    66→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+    67→import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+    68→import { useToast } from "@/hooks/use-toast";
+    69→import { cn } from "@/lib/utils";
+    70→import { api, formatDateTime } from "@/lib/qas33/api";
+    71→import { ADMIN_ROLE_META, normalizeAdminRole, type AdminRole, type SessionInfo } from "@/lib/qas33/types";
+    72→import { CopyButton, ErrorAlert, TableSkeleton, useLoad } from "./mdrrmo-shared";
+    73→
+    74→type UsersResponse = Awaited<ReturnType<typeof api.adminUsers>>;
+    75→type AdminUserRow = UsersResponse["users"][number];
+    76→
+    77→const ROLES: AdminRole[] = ["SYSTEM_ADMIN", "MDRRMO_OFFICER", "MDRRMO_STAFF"];
+    78→
+    79→function RoleBadge({ role }: { role: string }) {
+    80→  const meta = ADMIN_ROLE_META[normalizeAdminRole(role)];
+    81→  return (
+    82→    <span
+    83→      className={cn(
+    84→        "inline-flex items-center whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+    85→        meta.badge
+    86→      )}
+    87→    >
+    88→      {meta.label}
+    89→    </span>
+    90→  );
+    91→}
+    92→
+    93→// Looks-like-a-disabled-menu-item that carries a tooltip (disabled Radix items
+    94→// swallow pointer events, so we render a non-interactive lookalike instead).
+    95→function ProtectedAction({ icon: Icon, label, tooltip }: { icon: LucideIcon; label: string; tooltip: string }) {
+    96→  return (
+    97→    <TooltipProvider delayDuration={100}>
+    98→      <Tooltip>
+    99→        <TooltipTrigger asChild>
+   100→          <span
+   101→            tabIndex={0}
+   102→            role="button"
+   103→            aria-label={`${label} — ${tooltip}`}
+   104→            className="relative flex w-full cursor-not-allowed select-none items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground outline-none opacity-50"
+   105→          >
+   106→            <Icon className="h-4 w-4" /> {label}
+   107→          </span>
+   108→        </TooltipTrigger>
+   109→        <TooltipContent side="left" className="max-w-56 text-xs">
+   110→          {tooltip}
+   111→        </TooltipContent>
+   112→      </Tooltip>
+   113→    </TooltipProvider>
+   114→  );
+   115→}
+   116→
+   117→export default function MdrrmoUsers({ session }: { session: SessionInfo }) {
+   118→  const [tab, setTab] = useState<string>("console");
+   119→  return (
+   120→    <div className="space-y-4">
+   121→      <header className="flex flex-wrap items-end justify-between gap-2">
+   122→        <div>
+   123→          <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+   124→            <UsersIcon className="h-5 w-5 text-primary" /> Users
+   125→          </h1>
+   126→          <p className="text-sm text-muted-foreground">
+   127→            All user accounts &amp; role configuration — System Administrator only
+   128→          </p>
+   129→        </div>
+   130→      </header>
+   131→
+   132→      <Tabs value={tab} onValueChange={setTab}>
+   133→        <TabsList>
+   134→          <TabsTrigger value="console" className="gap-1.5">
+   135→            <UsersIcon className="h-4 w-4" /> Console Users
+   136→          </TabsTrigger>
+   137→          <TabsTrigger value="barangay" className="gap-1.5">
+   138→            <Building2 className="h-4 w-4" /> Barangay Accounts
+   139→          </TabsTrigger>
+   140→        </TabsList>
+   141→        <TabsContent value="console" className="mt-4">
+   142→          <ConsoleUsers session={session} />
+   143→        </TabsContent>
+   144→        <TabsContent value="barangay" className="mt-4">
+   145→          <BarangayAccounts />
+   146→        </TabsContent>
+   147→      </Tabs>
+   148→    </div>
+   149→  );
+   150→}
+   151→
+   152→// ---------------------------------------------------------------------------
+   153→// Tab 1 — console accounts (role editing, password resets, enable/disable)
+   154→// ---------------------------------------------------------------------------
+   155→function ConsoleUsers({ session }: { session: SessionInfo }) {
+   156→  const { toast } = useToast();
+   157→  const { data, loading, error, reload } = useLoad<UsersResponse>(() => api.adminUsers(), "admin-users");
+   158→
+   159→  const [busy, setBusy] = useState(false);
+   160→  const [addOpen, setAddOpen] = useState(false);
+   161→  const [editUser, setEditUser] = useState<AdminUserRow | null>(null);
+   162→  const [resetUser, setResetUser] = useState<AdminUserRow | null>(null);
+   163→  const [confirmToggle, setConfirmToggle] = useState<AdminUserRow | null>(null);
+   164→  const [confirmDelete, setConfirmDelete] = useState<AdminUserRow | null>(null);
+   165→
+   166→  const users = data?.users ?? [];
+   167→  const selfId = session.admin?.id;
+   168→
+   169→  const toggleUser = async (user: AdminUserRow) => {
+   170→    setBusy(true);
+   171→    try {
+   172→      await api.adminUpdateUser(user.id, { active: !user.active });
+   173→      toast({
+   174→        title: user.active ? "User disabled" : "User enabled",
+   175→        description: `${user.name} (${user.username}) ${user.active ? "can no longer sign in" : "can sign in again"}.`,
+   176→      });
+   177→      reload();
+   178→    } catch (e) {
+   179→      toast({
+   180→        title: "Could not update user",
+   181→        description: e instanceof Error ? e.message : "Please try again.",
+   182→        variant: "destructive",
+   183→      });
+   184→    } finally {
+   185→      setBusy(false);
+   186→    }
+   187→  };
+   188→
+   189→  const deleteUser = async (user: AdminUserRow) => {
+   190→    setBusy(true);
+   191→    try {
+   192→      await api.adminDeleteUser(user.id);
+   193→      toast({ title: "User deleted", description: `${user.name} (${user.username}) was removed.` });
+   194→      setConfirmDelete(null);
+   195→      reload();
+   196→    } catch (e) {
+   197→      toast({
+   198→        title: "Could not delete user",
+   199→        description: e instanceof Error ? e.message : "Please try again.",
+   200→        variant: "destructive",
+   201→      });
+   202→    } finally {
+   203→      setBusy(false);
+   204→    }
+   205→  };
+   206→
+   207→  return (
+   208→    <div className="space-y-4">
+   209→      <div className="flex flex-wrap items-center justify-between gap-2">
+   210→        <p className="text-sm text-muted-foreground">
+   211→          Console accounts and role assignments — changes are recorded in the audit trail
+   212→        </p>
+   213→        <Button onClick={() => setAddOpen(true)}>
+   214→          <UserPlus className="h-4 w-4" /> Add User
+   215→        </Button>
+   216→      </div>
+   217→
+   218→      {/* Role / permission model reference */}
+   219→      <Card>
+   220→        <CardHeader className="pb-3">
+   221→          <CardTitle className="text-base">Roles &amp; Permissions</CardTitle>
+   222→          <CardDescription>What each console role can do in QAS33.</CardDescription>
+   223→        </CardHeader>
+   224→        <CardContent className="grid gap-3 p-6 pt-3 sm:grid-cols-3">
+   225→          {ROLES.map((r) => (
+   226→            <div key={r} className="rounded-lg border p-3">
+   227→              <RoleBadge role={r} />
+   228→              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{ADMIN_ROLE_META[r].description}</p>
+   229→            </div>
+   230→          ))}
+   231→        </CardContent>
+   232→      </Card>
+   233→
+   234→      <Card>
+   235→        <CardHeader className="pb-3">
+   236→          <CardTitle className="text-base">Console Accounts</CardTitle>
+   237→          <CardDescription>
+   238→            {loading ? "Loading accounts…" : `${users.length} account${users.length === 1 ? "" : "s"} • role changes are recorded in the audit trail`}
+   239→          </CardDescription>
+   240→        </CardHeader>
+   241→        <CardContent className="p-0 pb-3">
+   242→          {error ? (
+   243→            <div className="p-4">
+   244→              <ErrorAlert message={error} onRetry={reload} />
+   245→            </div>
+   246→          ) : loading ? (
+   247→            <div className="p-4">
+   248→              <TableSkeleton rows={4} cols={7} />
+   249→            </div>
+   250→          ) : users.length === 0 ? (
+   251→            <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+   252→              <UsersIcon className="h-8 w-8 text-muted-foreground" />
+   253→              <p className="text-sm text-muted-foreground">No console users found.</p>
+   254→            </div>
+   255→          ) : (
+   256→            <div className="overflow-x-auto">
+   257→              <Table className="min-w-[820px]">
+   258→                <TableHeader>
+   259→                  <TableRow>
+   260→                    <TableHead className="pl-4">Username</TableHead>
+   261→                    <TableHead>Name</TableHead>
+   262→                    <TableHead>Position</TableHead>
+   263→                    <TableHead>Role</TableHead>
+   264→                    <TableHead>Status</TableHead>
+   265→                    <TableHead>Last Login</TableHead>
+   266→                    <TableHead className="pr-4 text-right">Actions</TableHead>
+   267→                  </TableRow>
+   268→                </TableHeader>
+   269→                <TableBody>
+   270→                  {users.map((u) => {
+   271→                    const isSelf = u.id === selfId;
+   272→                    const isDefault = u.username === "sysadmin";
+   273→                    return (
+   274→                      <TableRow key={u.id}>
+   275→                        <TableCell className="pl-4 font-mono text-xs">{u.username}</TableCell>
+   276→                        <TableCell>
+   277→                          <div className="flex flex-wrap items-center gap-1.5 font-medium">
+   278→                            {u.name}
+   279→                            {isSelf && (
+   280→                              <span className="rounded-full border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+   281→                                you
+   282→                              </span>
+   283→                            )}
+   284→                            {isDefault && (
+   285→                              <span className="rounded-full border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300">
+   286→                                Default
+   287→                              </span>
+   288→                            )}
+   289→                          </div>
+   290→                        </TableCell>
+   291→                        <TableCell className="text-sm text-muted-foreground">{u.position ?? "—"}</TableCell>
+   292→                        <TableCell>
+   293→                          <RoleBadge role={u.role} />
+   294→                        </TableCell>
+   295→                        <TableCell>
+   296→                          {u.active ? (
+   297→                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-emerald-700 dark:text-emerald-400">
+   298→                              <ShieldCheck className="h-3.5 w-3.5" /> Active
+   299→                            </span>
+   300→                          ) : (
+   301→                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-red-600">
+   302→                              <Ban className="h-3.5 w-3.5" /> Disabled
+   303→                            </span>
+   304→                          )}
+   305→                        </TableCell>
+   306→                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+   307→                          {u.lastLoginAt ? formatDateTime(u.lastLoginAt) : "Never"}
+   308→                        </TableCell>
+   309→                        <TableCell className="pr-4 text-right">
+   310→                          <DropdownMenu>
+   311→                            <DropdownMenuTrigger asChild>
+   312→                              <Button
+   313→                                size="sm"
+   314→                                variant="ghost"
+   315→                                className="h-8 w-8 p-0"
+   316→                                aria-label={`Actions for ${u.username}`}
+   317→                                disabled={busy}
+   318→                              >
+   319→                                <MoreHorizontal className="h-4 w-4" />
+   320→                              </Button>
+   321→                            </DropdownMenuTrigger>
+   322→                            <DropdownMenuContent align="end" className="w-52">
+   323→                              <DropdownMenuItem onClick={() => setEditUser(u)}>
+   324→                                <Pencil className="h-4 w-4" /> Edit User
+   325→                              </DropdownMenuItem>
+   326→                              <DropdownMenuItem onClick={() => setResetUser(u)}>
+   327→                                <KeyRound className="h-4 w-4" /> Reset Password
+   328→                              </DropdownMenuItem>
+   329→                              <DropdownMenuSeparator />
+   330→                              {isDefault && !isSelf ? (
+   331→                                <>
+   332→                                  <ProtectedAction
+   333→                                    icon={u.active ? Ban : CheckCircle2}
+   334→                                    label={u.active ? "Disable User" : "Enable User"}
+   335→                                    tooltip="The default System Administrator account is protected"
+   336→                                  />
+   337→                                  <ProtectedAction
+   338→                                    icon={Trash2}
+   339→                                    label="Delete User"
+   340→                                    tooltip="The default System Administrator account is protected"
+   341→                                  />
+   342→                                </>
+   343→                              ) : isSelf ? null : (
+   344→                                <>
+   345→                                  <DropdownMenuItem onClick={() => setConfirmToggle(u)}>
+   346→                                    {u.active ? (
+   347→                                      <Ban className="h-4 w-4" />
+   348→                                    ) : (
+   349→                                      <CheckCircle2 className="h-4 w-4" />
+   350→                                    )}{" "}
+   351→                                    {u.active ? "Disable User" : "Enable User"}
+   352→                                  </DropdownMenuItem>
+   353→                                  <DropdownMenuItem
+   354→                                    className="text-destructive focus:text-destructive"
+   355→                                    onClick={() => setConfirmDelete(u)}
+   356→                                  >
+   357→                                    <Trash2 className="h-4 w-4" /> Delete User
+   358→                                  </DropdownMenuItem>
+   359→                                </>
+   360→                              )}
+   361→                            </DropdownMenuContent>
+   362→                          </DropdownMenu>
+   363→                        </TableCell>
+   364→                      </TableRow>
+   365→                    );
+   366→                  })}
+   367→                </TableBody>
+   368→              </Table>
+   369→            </div>
+   370→          )}
+   371→        </CardContent>
+   372→      </Card>
+   373→
+   374→      {/* ---- add user ---- */}
+   375→      {addOpen && (
+   376→        <AddUserDialog
+   377→          onClose={() => setAddOpen(false)}
+   378→          onCreated={() => {
+   379→            setAddOpen(false);
+   380→            reload();
+   381→          }}
+   382→        />
+   383→      )}
+   384→
+   385→      {/* ---- edit user (name, position, role, active) ---- */}
+   386→      {editUser && (
+   387→        <EditUserDialog
+   388→          user={editUser}
+   389→          onClose={() => setEditUser(null)}
+   390→          onSaved={() => {
+   391→            setEditUser(null);
+   392→            reload();
+   393→          }}
+   394→        />
+   395→      )}
+   396→
+   397→      {/* ---- reset password ---- */}
+   398→      {resetUser && (
+   399→        <ResetPasswordDialog
+   400→          user={resetUser}
+   401→          onClose={() => setResetUser(null)}
+   402→          onDone={() => {
+   403→            setResetUser(null);
+   404→            reload();
+   405→          }}
+   406→        />
+   407→      )}
+   408→
+   409→      {/* ---- disable / enable confirm ---- */}
+   410→      <AlertDialog open={!!confirmToggle} onOpenChange={(open) => !open && !busy && setConfirmToggle(null)}>
+   411→        <AlertDialogContent>
+   412→          <AlertDialogHeader>
+   413→            <AlertDialogTitle>{confirmToggle?.active ? "Disable this user?" : "Enable this user?"}</AlertDialogTitle>
+   414→            <AlertDialogDescription>
+   415→              {confirmToggle?.active
+   416→                ? `${confirmToggle.name} (${confirmToggle.username}) will lose access to the MDRRMO console until re-enabled.`
+   417→                : `${confirmToggle?.name} (${confirmToggle?.username}) will regain access to the MDRRMO console.`}
+   418→            </AlertDialogDescription>
+   419→          </AlertDialogHeader>
+   420→          <AlertDialogFooter>
+   421→            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+   422→            <AlertDialogAction
+   423→              disabled={busy}
+   424→              onClick={() => {
+   425→                const user = confirmToggle;
+   426→                setConfirmToggle(null);
+   427→                if (user) void toggleUser(user);
+   428→              }}
+   429→            >
+   430→              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+   431→              {confirmToggle?.active ? "Disable User" : "Enable User"}
+   432→            </AlertDialogAction>
+   433→          </AlertDialogFooter>
+   434→        </AlertDialogContent>
+   435→      </AlertDialog>
+   436→
+   437→      {/* ---- delete confirm ---- */}
+   438→      <AlertDialog open={!!confirmDelete} onOpenChange={(open) => !open && !busy && setConfirmDelete(null)}>
+   439→        <AlertDialogContent>
+   440→          <AlertDialogHeader>
+   441→            <AlertDialogTitle className="flex items-center gap-2">
+   442→              <Trash2 className="h-5 w-5 text-destructive" /> Delete this user?
+   443→            </AlertDialogTitle>
+   444→            <AlertDialogDescription>
+   445→              {confirmDelete?.name} ({confirmDelete?.username}) will be permanently removed. This action cannot be
+   446→              undone. The default System Administrator account and your own account cannot be deleted.
+   447→            </AlertDialogDescription>
+   448→          </AlertDialogHeader>
+   449→          <AlertDialogFooter>
+   450→            <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+   451→            <AlertDialogAction
+   452→              className="bg-destructive text-white hover:bg-destructive/90"
+   453→              disabled={busy}
+   454→              onClick={() => {
+   455→                const user = confirmDelete;
+   456→                if (user) void deleteUser(user);
+   457→              }}
+   458→            >
+   459→              {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+   460→              Delete User
+   461→            </AlertDialogAction>
+   462→          </AlertDialogFooter>
+   463→        </AlertDialogContent>
+   464→      </AlertDialog>
+   465→    </div>
+   466→  );
+   467→}
+   468→
+   469→// ---------------------------------------------------------------------------
+   470→// Add user dialog (mounted only while open so the form resets on close)
+   471→// ---------------------------------------------------------------------------
+   472→function AddUserDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+   473→  const { toast } = useToast();
+   474→  const [username, setUsername] = useState("");
+   475→  const [name, setName] = useState("");
+   476→  const [position, setPosition] = useState("");
+   477→  const [password, setPassword] = useState("");
+   478→  const [role, setRole] = useState<AdminRole>("MDRRMO_STAFF");
+   479→  const [saving, setSaving] = useState(false);
+   480→
+   481→  const valid = username.trim().length >= 3 && name.trim().length > 0 && password.length >= 8;
+   482→
+   483→  const submit = async () => {
+   484→    if (!valid) return;
+   485→    setSaving(true);
+   486→    try {
+   487→      await api.adminCreateUser({
+   488→        username: username.trim(),
+   489→        name: name.trim(),
+   490→        position: position.trim() || undefined,
+   491→        password,
+   492→        role,
+   493→      });
+   494→      toast({
+   495→        title: "User created",
+   496→        description: `${name.trim()} (${username.trim()}) can now sign in as ${ADMIN_ROLE_META[role].label}.`,
+   497→      });
+   498→      onCreated();
+   499→    } catch (e) {
+   500→      toast({
+   501→        title: "Could not create user",
+   502→        description: e instanceof Error ? e.message : "Please try again.",
+   503→        variant: "destructive",
+   504→      });
+   505→      setSaving(false);
+   506→    }
+   507→  };
+   508→
+   509→  return (
+   510→    <Dialog open onOpenChange={(o) => !saving && !o && onClose()}>
+   511→      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
+   512→        <DialogHeader>
+   513→          <DialogTitle className="flex items-center gap-2">
+   514→            <UserPlus className="h-5 w-5 text-primary" /> Add Console User
+   515→          </DialogTitle>
+   516→          <DialogDescription>
+   517→            Create an account for the MDRRMO console. Username must be 3+ characters, password 8+.
+   518→          </DialogDescription>
+   519→        </DialogHeader>
+   520→        <div className="grid gap-3">
+   521→          <div className="space-y-1.5">
+   522→            <Label htmlFor="nu-username">Username</Label>
+   523→            <Input
+   524→              id="nu-username"
+   525→              value={username}
+   526→              onChange={(e) => setUsername(e.target.value)}
+   527→              placeholder="e.g., mdrrmo2"
+   528→              autoComplete="off"
+   529→              className="font-mono"
+   530→            />
+   531→          </div>
+   532→          <div className="space-y-1.5">
+   533→            <Label htmlFor="nu-name">Full name</Label>
+   534→            <Input id="nu-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g., Maria D. Santos" />
+   535→          </div>
+   536→          <div className="space-y-1.5">
+   537→            <Label htmlFor="nu-position">Position</Label>
+   538→            <Input
+   539→              id="nu-position"
+   540→              value={position}
+   541→              onChange={(e) => setPosition(e.target.value)}
+   542→              placeholder="e.g., DRRM Staff"
+   543→            />
+   544→          </div>
+   545→          <div className="space-y-1.5">
+   546→            <Label htmlFor="nu-password">Password</Label>
+   547→            <Input
+   548→              id="nu-password"
+   549→              type="password"
+   550→              value={password}
+   551→              onChange={(e) => setPassword(e.target.value)}
+   552→              autoComplete="new-password"
+   553→            />
+   554→            <p className="text-[11px] text-muted-foreground">Minimum 8 characters.</p>
+   555→          </div>
+   556→          <div className="space-y-1.5">
+   557→            <Label htmlFor="nu-role">Role</Label>
+   558→            <Select value={role} onValueChange={(v) => setRole(normalizeAdminRole(v))}>
+   559→              <SelectTrigger id="nu-role">
+   560→                <SelectValue />
+   561→              </SelectTrigger>
+   562→              <SelectContent>
+   563→                {ROLES.map((r) => (
+   564→                  <SelectItem key={r} value={r}>
+   565→                    {ADMIN_ROLE_META[r].label}
+   566→                  </SelectItem>
+   567→                ))}
+   568→              </SelectContent>
+   569→            </Select>
+   570→          </div>
+   571→        </div>
+   572→        <DialogFooter>
+   573→          <Button variant="outline" disabled={saving} onClick={onClose}>
+   574→            Cancel
+   575→          </Button>
+   576→          <Button disabled={!valid || saving} onClick={() => void submit()}>
+   577→            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+   578→            Create User
+   579→          </Button>
+   580→        </DialogFooter>
+   581→      </DialogContent>
+   582→    </Dialog>
+   583→  );
+   584→}
+   585→
+   586→// ---------------------------------------------------------------------------
+   587→// Edit user dialog — name, position, ROLE and active flag
+   588→// ---------------------------------------------------------------------------
+   589→function EditUserDialog({
+   590→  user,
+   591→  onClose,
+   592→  onSaved,
+   593→}: {
+   594→  user: AdminUserRow;
+   595→  onClose: () => void;
+   596→  onSaved: () => void;
+   597→}) {
+   598→  const { toast } = useToast();
+   599→  const [name, setName] = useState(user.name);
+   600→  const [position, setPosition] = useState(user.position ?? "");
+   601→  const [role, setRole] = useState<AdminRole>(normalizeAdminRole(user.role));
+   602→  const [active, setActive] = useState(user.active);
+   603→  const [saving, setSaving] = useState(false);
+   604→
+   605→  const submit = async () => {
+   606→    if (!name.trim()) {
+   607→      toast({ title: "Full name is required", variant: "destructive" });
+   608→      return;
+   609→    }
+   610→    setSaving(true);
+   611→    try {
+   612→      await api.adminUpdateUser(user.id, {
+   613→        name: name.trim(),
+   614→        position: position.trim(),
+   615→        role,
+   616→        active,
+   617→      });
+   618→      toast({
+   619→        title: "User updated",
+   620→        description: `${user.username} — changes saved and audit-logged.`,
+   621→      });
+   622→      onSaved();
+   623→    } catch (e) {
+   624→      toast({
+   625→        title: "Could not update user",
+   626→        description: e instanceof Error ? e.message : "Please try again.",
+   627→        variant: "destructive",
+   628→      });
+   629→      setSaving(false);
+   630→    }
+   631→  };
+   632→
+   633→  return (
+   634→    <Dialog open onOpenChange={(o) => !saving && !o && onClose()}>
+   635→      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md">
+   636→        <DialogHeader>
+   637→          <DialogTitle className="flex items-center gap-2">
+   638→            <Pencil className="h-5 w-5 text-primary" /> Edit User
+   639→          </DialogTitle>
+   640→          <DialogDescription>
+   641→            Update <span className="font-mono text-xs">{user.username}</span>
+   642→            {user.position ? ` — ${user.position}` : ""}. Role changes are recorded in the audit trail.
+   643→          </DialogDescription>
+   644→        </DialogHeader>
+   645→        <div className="grid gap-3">
+   646→          <div className="space-y-1.5">
+   647→            <Label htmlFor="eu-name">Full name</Label>
+   648→            <Input id="eu-name" value={name} onChange={(e) => setName(e.target.value)} />
+   649→          </div>
+   650→          <div className="space-y-1.5">
+   651→            <Label htmlFor="eu-position">Position</Label>
+   652→            <Input
+   653→              id="eu-position"
+   654→              value={position}
+   655→              onChange={(e) => setPosition(e.target.value)}
+   656→              placeholder="e.g., Municipal DRRM Officer"
+   657→            />
+   658→          </div>
+   659→          <div className="space-y-1.5">
+   660→            <Label htmlFor="eu-role">Role</Label>
+   661→            <Select value={role} onValueChange={(v) => setRole(normalizeAdminRole(v))}>
+   662→              <SelectTrigger id="eu-role">
+   663→                <SelectValue />
+   664→              </SelectTrigger>
+   665→              <SelectContent>
+   666→                {ROLES.map((r) => (
+   667→                  <SelectItem key={r} value={r}>
+   668→                    {ADMIN_ROLE_META[r].label}
+   669→                  </SelectItem>
+   670→                ))}
+   671→              </SelectContent>
+   672→            </Select>
+   673→            <p className="text-[11px] text-muted-foreground">{ADMIN_ROLE_META[role].description}</p>
+   674→          </div>
+   675→          <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+   676→            <div>
+   677→              <Label htmlFor="eu-active" className="text-sm font-medium">
+   678→                Active
+   679→              </Label>
+   680→              <p className="mt-0.5 text-xs text-muted-foreground">
+   681→                Disabled accounts cannot sign in to the console.
+   682→              </p>
+   683→            </div>
+   684→            <Switch id="eu-active" checked={active} onCheckedChange={setActive} disabled={saving} />
+   685→          </div>
+   686→        </div>
+   687→        <DialogFooter>
+   688→          <Button variant="outline" disabled={saving} onClick={onClose}>
+   689→            Cancel
+   690→          </Button>
+   691→          <Button disabled={saving} onClick={() => void submit()}>
+   692→            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+   693→            Save Changes
+   694→          </Button>
+   695→        </DialogFooter>
+   696→      </DialogContent>
+   697→    </Dialog>
+   698→  );
+   699→}
+   700→
+   701→// ---------------------------------------------------------------------------
+   702→// Reset password dialog
+   703→// ---------------------------------------------------------------------------
+   704→function ResetPasswordDialog({
+   705→  user,
+   706→  onClose,
+   707→  onDone,
+   708→}: {
+   709→  user: AdminUserRow;
+   710→  onClose: () => void;
+   711→  onDone: () => void;
+   712→}) {
+   713→  const { toast } = useToast();
+   714→  const [password, setPassword] = useState("");
+   715→  const [saving, setSaving] = useState(false);
+   716→  const valid = password.length >= 8;
+   717→
+   718→  const submit = async () => {
+   719→    if (!valid) return;
+   720→    setSaving(true);
+   721→    try {
+   722→      const res = await api.adminUpdateUser(user.id, { password });
+   723→      toast({
+   724→        title: "Password updated",
+   725→        description: res.message ?? `${user.username} must use the new password on next sign-in.`,
+   726→      });
+   727→      onDone();
+   728→    } catch (e) {
+   729→      toast({
+   730→        title: "Could not reset password",
+   731→        description: e instanceof Error ? e.message : "Please try again.",
+   732→        variant: "destructive",
+   733→      });
+   734→      setSaving(false);
+   735→    }
+   736→  };
+   737→
+   738→  return (
+   739→    <Dialog open onOpenChange={(o) => !saving && !o && onClose()}>
+   740→      <DialogContent className="sm:max-w-sm">
+   741→        <DialogHeader>
+   742→          <DialogTitle className="flex items-center gap-2">
+   743→            <KeyRound className="h-5 w-5 text-primary" /> Reset Password
+   744→          </DialogTitle>
+   745→          <DialogDescription>
+   746→            Set a new password for <span className="font-medium">{user.name}</span> (
+   747→            <span className="font-mono text-xs">{user.username}</span>). Active sessions for this account are revoked.
+   748→          </DialogDescription>
+   749→        </DialogHeader>
+   750→        <div className="space-y-1.5">
+   751→          <Label htmlFor="rp-password">New password</Label>
+   752→          <Input
+   753→            id="rp-password"
+   754→            type="password"
+   755→            value={password}
+   756→            onChange={(e) => setPassword(e.target.value)}
+   757→            autoComplete="new-password"
+   758→            aria-invalid={!valid && password.length > 0}
+   759→          />
+   760→          <p className="text-[11px] text-muted-foreground">Minimum 8 characters.</p>
+   761→        </div>
+   762→        <DialogFooter>
+   763→          <Button variant="outline" disabled={saving} onClick={onClose}>
+   764→            Cancel
+   765→          </Button>
+   766→          <Button disabled={!valid || saving} onClick={() => void submit()}>
+   767→            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+   768→            Update Password
+   769→          </Button>
+   770→        </DialogFooter>
+   771→      </DialogContent>
+   772→    </Dialog>
+   773→  );
+   774→}
+   775→
+   776→// ---------------------------------------------------------------------------
+   777→// Tab 2 — barangay accounts (33 login accounts: access PIN lifecycle)
+   778→// ---------------------------------------------------------------------------
+   779→type BarangayRowsResponse = Awaited<ReturnType<typeof api.adminBarangays>>;
+   780→type BarangayAccountRow = BarangayRowsResponse["barangays"][number];
+   781→
+   782→function isLocked(lockedUntil: string | null | undefined): boolean {
+   783→  return Boolean(lockedUntil && new Date(lockedUntil).getTime() > Date.now());
+   784→}
+   785→
+   786→function BarangayAccounts() {
+   787→  const { toast } = useToast();
+   788→  const { data, loading, error, reload } = useLoad<BarangayRowsResponse>(() => api.adminBarangays("", "ALL"), "barangay-accounts");
+   789→  const [search, setSearch] = useState("");
+   790→  const [busyId, setBusyId] = useState<string | null>(null);
+   791→  const [tempPin, setTempPin] = useState<{ pin: string; barangay: string; code: string } | null>(null);
+   792→  const [confirmToggle, setConfirmToggle] = useState<BarangayAccountRow | null>(null);
+   793→
+   794→  const rows = data?.barangays ?? [];
+   795→  const q = search.trim().toLowerCase();
+   796→  const filtered = q
+   797→    ? rows.filter((r) => r.name.toLowerCase().includes(q) || r.code.toLowerCase().includes(q) || (r.captain ?? "").toLowerCase().includes(q))
+   798→    : rows;
+   799→  const pb = (r: BarangayAccountRow) => r.officials.find((o) => o.position === "PUNONG_BARANGAY")?.name ?? r.captain ?? "—";
+   800→
+   801→  async function runAction(row: BarangayAccountRow, action: string, successTitle: string, successBody?: string) {
+   802→    setBusyId(row.id);
+   803→    try {
+   804→      const res = await api.adminBarangayAction(row.id, action);
+   805→      if (action === "reset-pin" && res.tempPin) {
+   806→        setTempPin({ pin: res.tempPin, barangay: row.name, code: row.code });
+   807→      } else {
+   808→        toast({ title: successTitle, description: successBody ?? `Barangay ${row.name} — done.` });
+   809→      }
+   810→      reload();
+   811→    } catch (e) {
+   812→      toast({
+   813→        title: "Action failed",
+   814→        description: e instanceof Error ? e.message : "Please try again.",
+   815→        variant: "destructive",
+   816→      });
+   817→    } finally {
+   818→      setBusyId(null);
+   819→    }
+   820→  }
+   821→
+   822→  return (
+   823→    <div className="space-y-4">
+   824→      <Card>
+   825→        <CardHeader className="pb-3">
+   826→          <CardTitle className="text-base">Barangay Login Accounts</CardTitle>
+   827→          <CardDescription>
+   828→            {loading
+   829→              ? "Loading accounts…"
+   830→              : `${rows.length} barangay accounts • barangays sign in with their code + Access PIN — roles do not apply to these accounts`}
+   831→          </CardDescription>
+   832→        </CardHeader>
+   833→        <CardContent className="p-0 pb-3">
+   834→          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-3">
+   835→            <div className="relative min-w-0 flex-1 sm:max-w-64">
+   836→              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+   837→              <Input
+   838→                value={search}
+   839→                placeholder="Search barangay or captain…"
+   840→                className="pl-8"
+   841→                aria-label="Search barangay accounts"
+   842→                onChange={(e) => setSearch(e.target.value)}
+   843→              />
+   844→            </div>
+   845→          </div>
+   846→
+   847→          {error ? (
+   848→            <div className="px-4">
+   849→              <ErrorAlert message={error} onRetry={reload} />
+   850→            </div>
+   851→          ) : loading ? (
+   852→            <div className="px-4">
+   853→              <TableSkeleton rows={6} cols={7} />
+   854→            </div>
+   855→          ) : filtered.length === 0 ? (
+   856→            <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+   857→              <Building2 className="h-8 w-8 text-muted-foreground" />
+   858→              <p className="text-sm text-muted-foreground">No barangay accounts match &ldquo;{search}&rdquo;.</p>
+   859→            </div>
+   860→          ) : (
+   861→            <div className="overflow-x-auto">
+   862→              <Table className="min-w-[920px]">
+   863→                <TableHeader>
+   864→                  <TableRow>
+   865→                    <TableHead className="pl-4">Barangay</TableHead>
+   866→                    <TableHead>Punong Barangay</TableHead>
+   867→                    <TableHead>Account</TableHead>
+   868→                    <TableHead>Access PIN</TableHead>
+   869→                    <TableHead>Lockout</TableHead>
+   870→                    <TableHead>Last Login</TableHead>
+   871→                    <TableHead className="pr-4 text-right">Actions</TableHead>
+   872→                  </TableRow>
+   873→                </TableHeader>
+   874→                <TableBody>
+   875→                  {filtered.map((r) => {
+   876→                    const locked = isLocked(r.credential?.lockedUntil);
+   877→                    const pinActive = r.credential?.active ?? false;
+   878→                    const busy = busyId === r.id;
+   879→                    return (
+   880→                      <TableRow key={r.id}>
+   881→                        <TableCell className="pl-4">
+   882→                          <div className="font-medium">{r.name}</div>
+   883→                          <div className="font-mono text-[11px] text-muted-foreground">{r.code}</div>
+   884→                        </TableCell>
+   885→                        <TableCell className="text-sm text-muted-foreground">{pb(r)}</TableCell>
+   886→                        <TableCell>
+   887→                          {r.active ? (
+   888→                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-emerald-700 dark:text-emerald-400">
+   889→                              <ShieldCheck className="h-3.5 w-3.5" /> Active
+   890→                            </span>
+   891→                          ) : (
+   892→                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-red-600">
+   893→                              <Ban className="h-3.5 w-3.5" /> Disabled
+   894→                            </span>
+   895→                          )}
+   896→                        </TableCell>
+   897→                        <TableCell>
+   898→                          {!r.credential ? (
+   899→                            <span className="text-xs text-muted-foreground">No PIN</span>
+   900→                          ) : pinActive ? (
+   901→                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-emerald-700 dark:text-emerald-400">
+   902→                              <KeyRound className="h-3.5 w-3.5" />
+   903→                              {r.credential.mustChangePin ? "Temp PIN pending" : "Active"}
+   904→                            </span>
+   905→                          ) : (
+   906→                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-red-600">
+   907→                              <Ban className="h-3.5 w-3.5" /> Revoked
+   908→                            </span>
+   909→                          )}
+   910→                        </TableCell>
+   911→                        <TableCell>
+   912→                          {locked ? (
+   913→                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-red-600">
+   914→                              <Lock className="h-3.5 w-3.5" /> Locked
+   915→                            </span>
+   916→                          ) : (
+   917→                            <span className="text-xs text-muted-foreground">OK</span>
+   918→                          )}
+   919→                        </TableCell>
+   920→                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+   921→                          {r.credential?.lastLoginAt ? formatDateTime(r.credential.lastLoginAt) : "Never"}
+   922→                        </TableCell>
+   923→                        <TableCell className="pr-4 text-right">
+   924→                          <DropdownMenu>
+   925→                            <DropdownMenuTrigger asChild>
+   926→                              <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={`Actions for ${r.name}`} disabled={busy}>
+   927→                                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
+   928→                              </Button>
+   929→                            </DropdownMenuTrigger>
+   930→                            <DropdownMenuContent align="end" className="w-52">
+   931→                              <DropdownMenuItem onClick={() => void runAction(r, "reset-pin", "Temporary PIN issued")}>
+   932→                                <KeyRound className="h-4 w-4" /> Reset PIN
+   933→                              </DropdownMenuItem>
+   934→                              {locked && (
+   935→                                <DropdownMenuItem onClick={() => void runAction(r, "clear-lock", "Lockout cleared")}>
+   936→                                  <LockOpen className="h-4 w-4" /> Clear Lockout
+   937→                                </DropdownMenuItem>
+   938→                              )}
+   939→                              {r.credential && pinActive ? (
+   940→                                <DropdownMenuItem onClick={() => void runAction(r, "revoke-pin", "Access PIN revoked")}>
+   941→                                  <Ban className="h-4 w-4" /> Revoke PIN
+   942→                                </DropdownMenuItem>
+   943→                              ) : (
+   944→                                <DropdownMenuItem onClick={() => void runAction(r, "activate-pin", "Access PIN re-activated")}>
+   945→                                  <CheckCircle2 className="h-4 w-4" /> Re-activate PIN
+   946→                                </DropdownMenuItem>
+   947→                              )}
+   948→                              <DropdownMenuSeparator />
+   949→                              <DropdownMenuItem onClick={() => setConfirmToggle(r)}>
+   950→                                {r.active ? (
+   951→                                  <>
+   952→                                    <Ban className="h-4 w-4" /> Disable Account
+   953→                                  </>
+   954→                                ) : (
+   955→                                  <>
+   956→                                    <CheckCircle2 className="h-4 w-4" /> Enable Account
+   957→                                  </>
+   958→                                )}
+   959→                              </DropdownMenuItem>
+   960→                            </DropdownMenuContent>
+   961→                          </DropdownMenu>
+   962→                        </TableCell>
+   963→                      </TableRow>
+   964→                    );
+   965→                  })}
+   966→                </TableBody>
+   967→              </Table>
+   968→            </div>
+   969→          )}
+   970→        </CardContent>
+   971→      </Card>
+   972→
+   973→      {/* One-time temporary PIN dialog */}
+   974→      <Dialog open={Boolean(tempPin)} onOpenChange={(next) => !next && setTempPin(null)}>
+   975→        <DialogContent className="sm:max-w-md">
+   976→          <DialogHeader>
+   977→            <DialogTitle className="flex items-center gap-2">
+   978→              <KeyRound className="h-5 w-5 text-primary" /> One-Time Temporary PIN
+   979→            </DialogTitle>
+   980→            <DialogDescription>
+   981→              {tempPin && (
+   982→                <>
+   983→                  New temporary PIN for <span className="font-semibold">{tempPin.barangay}</span> ({tempPin.code}). Share
+   984→                  it securely — the barangay must change it on first login, and it will not be shown again.
+   985→                </>
+   986→              )}
+   987→            </DialogDescription>
+   988→          </DialogHeader>
+   989→          {tempPin && (
+   990→            <div className="flex items-center justify-center gap-3 rounded-xl border border-dashed bg-muted/40 p-4">
+   991→              <span className="select-all font-mono text-2xl font-bold tracking-widest">{tempPin.pin}</span>
+   992→              <CopyButton value={tempPin.pin} label="Copy" />
+   993→            </div>
+   994→          )}
+   995→          <DialogFooter>
+   996→            <Button variant="outline" onClick={() => setTempPin(null)}>
+   997→              Done
+   998→            </Button>
+   999→          </DialogFooter>
+  1000→        </DialogContent>
+  1001→      </Dialog>
+  1002→
+  1003→      {/* Enable / disable confirmation */}
+  1004→      <AlertDialog open={Boolean(confirmToggle)} onOpenChange={(next) => !next && setConfirmToggle(null)}>
+  1005→        <AlertDialogContent>
+  1006→          <AlertDialogHeader>
+  1007→            <AlertDialogTitle>{confirmToggle?.active ? "Disable this account?" : "Enable this account?"}</AlertDialogTitle>
+  1008→            <AlertDialogDescription>
+  1009→              {confirmToggle?.active
+  1010→                ? `Barangay ${confirmToggle?.name} will not be able to sign in until the account is re-enabled.`
+  1011→                : `Barangay ${confirmToggle?.name} will be able to sign in again with their Access PIN.`}
+  1012→            </AlertDialogDescription>
+  1013→          </AlertDialogHeader>
+  1014→          <AlertDialogFooter>
+  1015→            <AlertDialogCancel>Cancel</AlertDialogCancel>
+  1016→            <AlertDialogAction
+  1017→              onClick={(e) => {
+  1018→                e.preventDefault();
+  1019→                if (confirmToggle) {
+  1020→                  const row = confirmToggle;
+  1021→                  setConfirmToggle(null);
+  1022→                  void runAction(
+  1023→                    row,
+  1024→                    "toggle-active",
+  1025→                    row.active ? "Account disabled" : "Account enabled",
+  1026→                    `Barangay ${row.name} — ${row.active ? "can no longer sign in" : "can sign in again"}.`
+  1027→                  );
+  1028→                }
+  1029→              }}
+  1030→            >
+  1031→              {confirmToggle?.active ? "Disable Account" : "Enable Account"}
+  1032→            </AlertDialogAction>
+  1033→          </AlertDialogFooter>
+  1034→        </AlertDialogContent>
+  1035→      </AlertDialog>
+  1036→    </div>
+  1037→  );
+  1038→}
+  1039→

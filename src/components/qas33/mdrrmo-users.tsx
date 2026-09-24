@@ -17,6 +17,7 @@ import {
   LockOpen,
   MoreHorizontal,
   Pencil,
+  Printer,
   Search,
   ShieldCheck,
   Trash2,
@@ -70,6 +71,8 @@ import { cn } from "@/lib/utils";
 import { api, formatDateTime } from "@/lib/qas33/api";
 import { ADMIN_ROLE_META, normalizeAdminRole, type AdminRole, type SessionInfo } from "@/lib/qas33/types";
 import { CopyButton, ErrorAlert, TableSkeleton, useLoad } from "./mdrrmo-shared";
+import { useCredentialPrinter } from "./credential-print";
+import type { CredentialSheet } from "@/lib/qas33/types";
 
 type UsersResponse = Awaited<ReturnType<typeof api.adminUsers>>;
 type AdminUserRow = UsersResponse["users"][number];
@@ -142,7 +145,7 @@ export default function MdrrmoUsers({ session }: { session: SessionInfo }) {
           <ConsoleUsers session={session} />
         </TabsContent>
         <TabsContent value="barangay" className="mt-4">
-          <BarangayAccounts />
+          <BarangayAccounts session={session} />
         </TabsContent>
       </Tabs>
     </div>
@@ -783,12 +786,13 @@ function isLocked(lockedUntil: string | null | undefined): boolean {
   return Boolean(lockedUntil && new Date(lockedUntil).getTime() > Date.now());
 }
 
-function BarangayAccounts() {
+function BarangayAccounts({ session }: { session: SessionInfo }) {
   const { toast } = useToast();
   const { data, loading, error, reload } = useLoad<BarangayRowsResponse>(() => api.adminBarangays("", "ALL"), "barangay-accounts");
+  const printer = useCredentialPrinter(reload);
   const [search, setSearch] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [tempPin, setTempPin] = useState<{ pin: string; barangay: string; code: string } | null>(null);
+  const [tempPin, setTempPin] = useState<{ pin: string; barangay: string; code: string; sheet: CredentialSheet } | null>(null);
   const [confirmToggle, setConfirmToggle] = useState<BarangayAccountRow | null>(null);
 
   const rows = data?.barangays ?? [];
@@ -803,7 +807,21 @@ function BarangayAccounts() {
     try {
       const res = await api.adminBarangayAction(row.id, action);
       if (action === "reset-pin" && res.tempPin) {
-        setTempPin({ pin: res.tempPin, barangay: row.name, code: row.code });
+        setTempPin({
+          pin: res.tempPin,
+          barangay: row.name,
+          code: row.code,
+          sheet: {
+            code: row.code,
+            name: row.name,
+            captain: row.captain ?? row.officials.find((o) => o.position === "PUNONG_BARANGAY")?.name ?? null,
+            tempPin: res.tempPin,
+            accountActive: true,
+            pinActive: true,
+            issuedAt: new Date().toISOString(),
+            issuedBy: { name: session.admin?.name ?? "MDRRMO", position: session.admin?.position ?? "MDRRMO" },
+          },
+        });
       } else {
         toast({ title: successTitle, description: successBody ?? `Barangay ${row.name} — done.` });
       }
@@ -842,6 +860,10 @@ function BarangayAccounts() {
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
+            <Button onClick={() => printer.printAll(rows)} disabled={loading || printer.busy} className="gap-1.5">
+              {printer.busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Printer className="h-4 w-4" aria-hidden="true" />}
+              Print All Sheets
+            </Button>
           </div>
 
           {error ? (
@@ -898,13 +920,20 @@ function BarangayAccounts() {
                           {!r.credential ? (
                             <span className="text-xs text-muted-foreground">No PIN</span>
                           ) : pinActive ? (
-                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                              <KeyRound className="h-3.5 w-3.5" />
-                              {r.credential.mustChangePin ? "Temp PIN pending" : "Active"}
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium",
+                                r.credential.tempPinPending
+                                  ? "text-emerald-700 dark:text-emerald-400"
+                                  : "text-amber-700 dark:text-amber-400"
+                              )}
+                            >
+                              <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+                              {r.credential.tempPinPending ? "Temp PIN pending" : "Set by barangay"}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-red-600">
-                              <Ban className="h-3.5 w-3.5" /> Revoked
+                              <Ban className="h-3.5 w-3.5" aria-hidden="true" /> Revoked
                             </span>
                           )}
                         </TableCell>
@@ -928,6 +957,10 @@ function BarangayAccounts() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-52">
+                              <DropdownMenuItem onClick={() => void printer.printOne(r)}>
+                                <Printer className="h-4 w-4" /> Print Credential
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => void runAction(r, "reset-pin", "Temporary PIN issued")}>
                                 <KeyRound className="h-4 w-4" /> Reset PIN
                               </DropdownMenuItem>
@@ -992,7 +1025,19 @@ function BarangayAccounts() {
               <CopyButton value={tempPin.pin} label="Copy" />
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => {
+                if (tempPin) {
+                  printer.printSheet(tempPin.sheet);
+                  setTempPin(null);
+                }
+              }}
+            >
+              <Printer className="h-4 w-4" aria-hidden="true" /> Print Credential Sheet
+            </Button>
             <Button variant="outline" onClick={() => setTempPin(null)}>
               Done
             </Button>
@@ -1033,6 +1078,9 @@ function BarangayAccounts() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Printable credential sheets (overlay + confirm dialogs) */}
+      {printer.overlay}
     </div>
   );
 }

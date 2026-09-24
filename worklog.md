@@ -280,3 +280,32 @@ Stage Summary:
 - Users module now covers ALL users: Console Users (roles) + Barangay Accounts (PIN/access lifecycle).
 - Database Management: 20 tables incl. File Library.
 - STILL PENDING from user: real council-member list + docx template contents (attachments never arrived on the server — ask user to re-upload).
+
+---
+Task ID: 15
+Agent: main
+Task: Printable barangay account credentials — 33 barangay accounts w/ PINs (each has own dashboard, pre-existing) + Officer/Staff/SysAdmin can generate & PRINT official account handouts to give to the barangays
+
+User requirement (this round):
+"create 33 barangay account with pincode and own dashboard, the mdrrmo, admin, staff can print the generated account to give on the barangay"
+
+Work Log:
+- Context: 33 barangay accounts w/ hashed PINs + per-barangay dashboards already existed (Tasks 13/14). New work = printable credential handouts for all 3 console roles.
+- NEW /api/admin/credentials (POST): requireAdmin() → Officer+Staff+SysAdmin (barangay sessions 401). mode "one" (reuses pending tempPin; 409 needsRegenerate when barangay set own PIN, explicit regenerate=true issues new PIN invalidating old); mode "all" (regenerate pending|missing|all — 26/7/0 seeded counts). issueTempPin() mirrors generate-pin action (hash+tempPin+mustChangePin=true+unlock). Audit: PIN_GENERATED + CREDENTIAL_SHEET_PRINTED (counts + mode). FIXED bug found in testing: 409 guard only covered missing credential, not set-PIN case (silent regen) — corrected.
+- admin-service listBarangayRows + types.ts: credential.tempPinPending (drives "printable now" UI). types.ts: CredentialSheet + CredentialsPrintResponse. api.ts: adminPrintCredentials().
+- NEW src/components/qas33/credential-print.tsx (~455 lines): CredentialSheetCard (official A4 handout: PH/Municipality/MDRRMO header, QAS33 title, barangay name + PD-BRG code + PB, big mono Temporary Access PIN w/ "set own PIN on first sign-in" note, 4-step How-to-sign-in w/ dynamic window.location.origin, CONFIDENTIAL box, Issued-by/Received-by signature blocks w/ date; red badges when account disabled/PIN revoked); CredentialSheetsOverlay (createPortal to body #qas33-print-portal, sticky toolbar Print N Sheets/Close, A4-width preview, body.qas33-printing class while open so @media print hides app + isolates portal — works for button AND Ctrl+P; Esc closes); useCredentialPrinter(onChanged) hook → { printOne, printAll, printSheet, busy, overlay } w/ regenerate AlertDialog + PrintAll Dialog (3 radio modes w/ live counts, destructive styling on regenerate-all, default=missing).
+- NEW mdrrmo-credentials.tsx module: header + Print All button, 4 summary cards (accounts / printable now / needs new PIN / no PIN), search, 33-row table (Barangay/PB/Account/PIN status/Last Login/per-row Print | Generate PIN & Print | Create PIN & Print), privacy footnote w/ issuer identity. Wired into mdrrmo-app.tsx: ViewKey+NAV "Credentials" (IdCard icon, position 3) — NOT in SYSADMIN_ONLY_KEYS → all console roles.
+- mdrrmo-users.tsx Barangay Accounts: Print All Sheets toolbar button, "Print Credential" dropdown item (first), tempPinPending-accurate badge ("Temp PIN pending" green / "Set by barangay" amber), Reset-PIN one-time dialog gained "Print Credential Sheet" button (client-built sheet w/ session issuer), {printer.overlay} mounted.
+- mdrrmo-barangays.tsx: header "Print Credentials" button, dropdown "Print Credential" item, Reset-PIN dialog "Print Credential Sheet" button (printer.printOne(row) — server-accurate issuer), {printer.overlay}. Fixed TDZ ordering (printer after useLoad reload).
+- globals.css: @media print rules (@page 10mm, body.qas33-printing > *:not(#qas33-print-portal) hidden, portal static/visible, .qas33-sheet-page-break break-after:page, print-color-adjust exact).
+- seed.ts: tempPin now seeded for unclaimed accounts (Albasan i=0 + never-logged-in i>=8 → 26 printable; i=1..7 tempPin null = "set own PIN", mustChangePin false — demo login PD-BRG-006/QAS33-006 unchanged). Re-seeded.
+- Verification: curl suite ALL-PASS (pending reuse QAS33-001; 409 needsRegenerate; regen → old PIN fails login "Incorrect PIN", new PIN logs in mustChangePin=true; barangay session 401; all/pending=27 sheets 0 gen; missing=33 sheets 6+27; all-mode=33 gen; staff issuer Jun Carlo Anasco; audit CREDENTIAL_SHEET_PRINTED entries). tsc 0 errors, eslint 0 errors, dev.log clean (200s only).
+- agent-browser E2E ALL-PASS: officer nav has Credentials (no Users/Settings/Database); module renders 33/26/7/0 cards + 26 Print + 7 Generate PIN & Print; Albasan Print → overlay full sheet (QAS33-001, PB Rodrigo M. Villanueva, origin URL, signatures) ; window.print stub → invoked + body class; Bacong Generate PIN & Print → confirm dialog → new random PIN sheet; Print All dialog (27/6/33 counts, default fill-missing) → 33 sheets PD-BRG-001…033, 32 page-breaks; staff login → Credentials visible, Albasan print → issuer "Jun Carlo Anasco, MDRRMO Staff"; sysadmin → Users > Barangay Accounts: Print All Sheets + dropdown Print Credential (opens Bacong sheet); Barangays module dropdown Print Credential; Reset PIN → dialog Print Credential Sheet → Bagumbayan sheet issuer "Tho Pogi, ICT Administrator / System Administrat…"; mobile 390px: no horizontal overflow, sheet 358px wide, portal scrollable to signature blocks. 0 page/console errors.
+- VLM QA: module PASS, A4 sheet PASS ("authoritative"), users tab PASS; mobile viewport-crop false-positive (fixed-overlay + internal scroll verified programmatically; full content reachable).
+
+Stage Summary:
+- All 33 barangay accounts have PIN codes + own dashboards (pre-existing, confirmed). NEW: printable official "Barangay Account Credential" handouts — MDRRMO Officer, MDRRMO Staff, AND System Administrator can generate & print them (A4, one page per barangay, page-breaks, print-isolated overlay, dynamic system URL).
+- Entry points: Credentials module (all roles) • Users > Barangay Accounts (sysadmin) • Barangays module (all roles) • both Reset-PIN dialogs.
+- Security model: only PENDING temp PINs printable; barangay-set PINs never exposed (regeneration requires explicit confirm + invalidates old PIN); every print/PIN action audited; barangay sessions blocked.
+- Files: NEW src/app/api/admin/credentials/route.ts, src/components/qas33/credential-print.tsx, src/components/qas33/mdrrmo-credentials.tsx. MODIFIED mdrrmo-app/users/barangays.tsx, admin-service.ts, api.ts, types.ts, globals.css, scripts/seed.ts.
+- DB re-seeded pristine (26 pending / 7 set / demo accounts unchanged).

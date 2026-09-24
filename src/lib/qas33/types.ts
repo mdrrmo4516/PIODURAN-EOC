@@ -360,6 +360,7 @@ export interface AdminBarangayRow {
   credential: {
     active: boolean;
     mustChangePin: boolean;
+    tempPinPending: boolean; // a temporary PIN is still pending → printable without regenerating
     lockedUntil: string | null;
     lastLoginAt: string | null;
   } | null;
@@ -555,3 +556,23 @@ export const STATUS_META: Record<
     group: "done",
   },
 };
+
+// ---- Printable barangay account credentials ----
+// One sheet per barangay — the official handout MDRRMO prints & gives to the
+// barangay so they can sign in to their own dashboard (code + temporary PIN).
+export interface CredentialSheet {
+  code: string; // PD-BRG-001
+  name: string; // Barangay name
+  captain: string | null; // Punong Barangay
+  tempPin: string; // QAS33-XXXXXX — temporary PIN pending first sign-in
+  accountActive: boolean;
+  pinActive: boolean;
+  issuedAt: string; // ISO
+  issuedBy: { name: string; position: string }; // console user who printed
+}
+
+export interface CredentialsPrintResponse {
+  sheets: CredentialSheet[];
+  generated: number; // new PINs issued for this print run
+  reused: number; // pending temporary PINs reused as-is
+}

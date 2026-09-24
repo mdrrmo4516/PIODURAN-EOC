@@ -385,7 +385,13 @@ async function main() {
         credential: {
           create: {
             pinHash: hashSecret(`QAS33-${String(i + 1).padStart(3, "0")}`),
-            mustChangePin: i === 0, // Albasan demonstrates first-time PIN change
+            // Accounts that never signed in keep a PENDING temporary PIN —
+            // MDRRMO/Staff/SysAdmin can print the credential handout for them
+            // (Credentials module). Barangays that already signed in have set
+            // their own PIN (tempPin cleared, not printable — regeneration
+            // issues a new one). Albasan (i=0) demonstrates first-time change.
+            tempPin: i < 8 && i !== 0 ? null : `QAS33-${String(i + 1).padStart(3, "0")}`,
+            mustChangePin: i === 0 || i >= 8,
             active: true,
             lastLoginAt: i < 8 ? daysAgo(1, 10, 15) : null,
           },
