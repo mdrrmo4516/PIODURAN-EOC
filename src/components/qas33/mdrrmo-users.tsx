@@ -1,8 +1,11 @@
 "use client";
 
-// QAS33 — Users (SYSTEM_ADMIN only): console accounts and role assignments.
-// Uses the dedicated /api/admin/users API (role editing, password resets,
-// enable/disable, delete) — the only place roles can be changed.
+// QAS33 — Users (SYSTEM_ADMIN only): ALL user accounts in one place.
+// Tab 1 "Console Users": MDRRMO console accounts + role assignment (the only
+//   place roles can be changed — /api/admin/users).
+// Tab 2 "Barangay Accounts": the 33 barangay login accounts — access PIN
+//   lifecycle (reset / revoke / reactivate), lockout clearing and enable /
+//   disable, via the /api/admin/barangays credential actions.
 
 import { useState } from "react";
 import {
@@ -10,12 +13,16 @@ import {
   CheckCircle2,
   KeyRound,
   Loader2,
+  Lock,
+  LockOpen,
   MoreHorizontal,
   Pencil,
+  Search,
   ShieldCheck,
   Trash2,
   UserPlus,
   Users as UsersIcon,
+  Building2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import {
@@ -56,12 +63,13 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { api, formatDateTime } from "@/lib/qas33/api";
 import { ADMIN_ROLE_META, normalizeAdminRole, type AdminRole, type SessionInfo } from "@/lib/qas33/types";
-import { ErrorAlert, TableSkeleton, useLoad } from "./mdrrmo-shared";
+import { CopyButton, ErrorAlert, TableSkeleton, useLoad } from "./mdrrmo-shared";
 
 type UsersResponse = Awaited<ReturnType<typeof api.adminUsers>>;
 type AdminUserRow = UsersResponse["users"][number];
@@ -107,6 +115,44 @@ function ProtectedAction({ icon: Icon, label, tooltip }: { icon: LucideIcon; lab
 }
 
 export default function MdrrmoUsers({ session }: { session: SessionInfo }) {
+  const [tab, setTab] = useState<string>("console");
+  return (
+    <div className="space-y-4">
+      <header className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+            <UsersIcon className="h-5 w-5 text-primary" /> Users
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            All user accounts &amp; role configuration — System Administrator only
+          </p>
+        </div>
+      </header>
+
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="console" className="gap-1.5">
+            <UsersIcon className="h-4 w-4" /> Console Users
+          </TabsTrigger>
+          <TabsTrigger value="barangay" className="gap-1.5">
+            <Building2 className="h-4 w-4" /> Barangay Accounts
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="console" className="mt-4">
+          <ConsoleUsers session={session} />
+        </TabsContent>
+        <TabsContent value="barangay" className="mt-4">
+          <BarangayAccounts />
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab 1 — console accounts (role editing, password resets, enable/disable)
+// ---------------------------------------------------------------------------
+function ConsoleUsers({ session }: { session: SessionInfo }) {
   const { toast } = useToast();
   const { data, loading, error, reload } = useLoad<UsersResponse>(() => api.adminUsers(), "admin-users");
 
@@ -160,19 +206,14 @@ export default function MdrrmoUsers({ session }: { session: SessionInfo }) {
 
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-            <UsersIcon className="h-5 w-5 text-primary" /> Users
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Console accounts and role assignments — System Administrator only
-          </p>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Console accounts and role assignments — changes are recorded in the audit trail
+        </p>
         <Button onClick={() => setAddOpen(true)}>
           <UserPlus className="h-4 w-4" /> Add User
         </Button>
-      </header>
+      </div>
 
       {/* Role / permission model reference */}
       <Card>
@@ -729,5 +770,269 @@ function ResetPasswordDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab 2 — barangay accounts (33 login accounts: access PIN lifecycle)
+// ---------------------------------------------------------------------------
+type BarangayRowsResponse = Awaited<ReturnType<typeof api.adminBarangays>>;
+type BarangayAccountRow = BarangayRowsResponse["barangays"][number];
+
+function isLocked(lockedUntil: string | null | undefined): boolean {
+  return Boolean(lockedUntil && new Date(lockedUntil).getTime() > Date.now());
+}
+
+function BarangayAccounts() {
+  const { toast } = useToast();
+  const { data, loading, error, reload } = useLoad<BarangayRowsResponse>(() => api.adminBarangays("", "ALL"), "barangay-accounts");
+  const [search, setSearch] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [tempPin, setTempPin] = useState<{ pin: string; barangay: string; code: string } | null>(null);
+  const [confirmToggle, setConfirmToggle] = useState<BarangayAccountRow | null>(null);
+
+  const rows = data?.barangays ?? [];
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? rows.filter((r) => r.name.toLowerCase().includes(q) || r.code.toLowerCase().includes(q) || (r.captain ?? "").toLowerCase().includes(q))
+    : rows;
+  const pb = (r: BarangayAccountRow) => r.officials.find((o) => o.position === "PUNONG_BARANGAY")?.name ?? r.captain ?? "—";
+
+  async function runAction(row: BarangayAccountRow, action: string, successTitle: string, successBody?: string) {
+    setBusyId(row.id);
+    try {
+      const res = await api.adminBarangayAction(row.id, action);
+      if (action === "reset-pin" && res.tempPin) {
+        setTempPin({ pin: res.tempPin, barangay: row.name, code: row.code });
+      } else {
+        toast({ title: successTitle, description: successBody ?? `Barangay ${row.name} — done.` });
+      }
+      reload();
+    } catch (e) {
+      toast({
+        title: "Action failed",
+        description: e instanceof Error ? e.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Barangay Login Accounts</CardTitle>
+          <CardDescription>
+            {loading
+              ? "Loading accounts…"
+              : `${rows.length} barangay accounts • barangays sign in with their code + Access PIN — roles do not apply to these accounts`}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0 pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 pb-3">
+            <div className="relative min-w-0 flex-1 sm:max-w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                value={search}
+                placeholder="Search barangay or captain…"
+                className="pl-8"
+                aria-label="Search barangay accounts"
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {error ? (
+            <div className="px-4">
+              <ErrorAlert message={error} onRetry={reload} />
+            </div>
+          ) : loading ? (
+            <div className="px-4">
+              <TableSkeleton rows={6} cols={7} />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+              <Building2 className="h-8 w-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">No barangay accounts match &ldquo;{search}&rdquo;.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table className="min-w-[920px]">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="pl-4">Barangay</TableHead>
+                    <TableHead>Punong Barangay</TableHead>
+                    <TableHead>Account</TableHead>
+                    <TableHead>Access PIN</TableHead>
+                    <TableHead>Lockout</TableHead>
+                    <TableHead>Last Login</TableHead>
+                    <TableHead className="pr-4 text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {filtered.map((r) => {
+                    const locked = isLocked(r.credential?.lockedUntil);
+                    const pinActive = r.credential?.active ?? false;
+                    const busy = busyId === r.id;
+                    return (
+                      <TableRow key={r.id}>
+                        <TableCell className="pl-4">
+                          <div className="font-medium">{r.name}</div>
+                          <div className="font-mono text-[11px] text-muted-foreground">{r.code}</div>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{pb(r)}</TableCell>
+                        <TableCell>
+                          {r.active ? (
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                              <ShieldCheck className="h-3.5 w-3.5" /> Active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-red-600">
+                              <Ban className="h-3.5 w-3.5" /> Disabled
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {!r.credential ? (
+                            <span className="text-xs text-muted-foreground">No PIN</span>
+                          ) : pinActive ? (
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                              <KeyRound className="h-3.5 w-3.5" />
+                              {r.credential.mustChangePin ? "Temp PIN pending" : "Active"}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-red-600">
+                              <Ban className="h-3.5 w-3.5" /> Revoked
+                            </span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {locked ? (
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-red-600">
+                              <Lock className="h-3.5 w-3.5" /> Locked
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">OK</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                          {r.credential?.lastLoginAt ? formatDateTime(r.credential.lastLoginAt) : "Never"}
+                        </TableCell>
+                        <TableCell className="pr-4 text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-8 w-8" aria-label={`Actions for ${r.name}`} disabled={busy}>
+                                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <MoreHorizontal className="h-4 w-4" />}
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end" className="w-52">
+                              <DropdownMenuItem onClick={() => void runAction(r, "reset-pin", "Temporary PIN issued")}>
+                                <KeyRound className="h-4 w-4" /> Reset PIN
+                              </DropdownMenuItem>
+                              {locked && (
+                                <DropdownMenuItem onClick={() => void runAction(r, "clear-lock", "Lockout cleared")}>
+                                  <LockOpen className="h-4 w-4" /> Clear Lockout
+                                </DropdownMenuItem>
+                              )}
+                              {r.credential && pinActive ? (
+                                <DropdownMenuItem onClick={() => void runAction(r, "revoke-pin", "Access PIN revoked")}>
+                                  <Ban className="h-4 w-4" /> Revoke PIN
+                                </DropdownMenuItem>
+                              ) : (
+                                <DropdownMenuItem onClick={() => void runAction(r, "activate-pin", "Access PIN re-activated")}>
+                                  <CheckCircle2 className="h-4 w-4" /> Re-activate PIN
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem onClick={() => setConfirmToggle(r)}>
+                                {r.active ? (
+                                  <>
+                                    <Ban className="h-4 w-4" /> Disable Account
+                                  </>
+                                ) : (
+                                  <>
+                                    <CheckCircle2 className="h-4 w-4" /> Enable Account
+                                  </>
+                                )}
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* One-time temporary PIN dialog */}
+      <Dialog open={Boolean(tempPin)} onOpenChange={(next) => !next && setTempPin(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-primary" /> One-Time Temporary PIN
+            </DialogTitle>
+            <DialogDescription>
+              {tempPin && (
+                <>
+                  New temporary PIN for <span className="font-semibold">{tempPin.barangay}</span> ({tempPin.code}). Share
+                  it securely — the barangay must change it on first login, and it will not be shown again.
+                </>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          {tempPin && (
+            <div className="flex items-center justify-center gap-3 rounded-xl border border-dashed bg-muted/40 p-4">
+              <span className="select-all font-mono text-2xl font-bold tracking-widest">{tempPin.pin}</span>
+              <CopyButton value={tempPin.pin} label="Copy" />
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTempPin(null)}>
+              Done
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Enable / disable confirmation */}
+      <AlertDialog open={Boolean(confirmToggle)} onOpenChange={(next) => !next && setConfirmToggle(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmToggle?.active ? "Disable this account?" : "Enable this account?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmToggle?.active
+                ? `Barangay ${confirmToggle?.name} will not be able to sign in until the account is re-enabled.`
+                : `Barangay ${confirmToggle?.name} will be able to sign in again with their Access PIN.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (confirmToggle) {
+                  const row = confirmToggle;
+                  setConfirmToggle(null);
+                  void runAction(
+                    row,
+                    "toggle-active",
+                    row.active ? "Account disabled" : "Account enabled",
+                    `Barangay ${row.name} — ${row.active ? "can no longer sign in" : "can sign in again"}.`
+                  );
+                }
+              }}
+            >
+              {confirmToggle?.active ? "Disable Account" : "Enable Account"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }

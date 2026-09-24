@@ -1,8 +1,9 @@
 "use client";
 
-// MDRRMO Console — Settings: general plan settings + rating criteria editor
+// MDRRMO Console — Settings: general plan settings, File Library upload rules
+// and rating criteria editor (SYSTEM_ADMIN only — gated in the nav + API)
 import { useEffect, useState } from "react";
-import { Loader2, Plus, Save, Settings2, Star, Trash2 } from "lucide-react";
+import { FolderOpen, Loader2, Plus, Save, Settings2, Star, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,9 +32,11 @@ export default function MdrrmoSettings() {
     province: "",
     motto: "",
   });
+  const [uploadForm, setUploadForm] = useState({ maxMB: "", formats: "" });
   const [criteria, setCriteria] = useState<CriterionDraft[]>([]);
   const [seeded, setSeeded] = useState(false);
   const [savingGeneral, setSavingGeneral] = useState(false);
+  const [savingUploads, setSavingUploads] = useState(false);
   const [savingCriteria, setSavingCriteria] = useState(false);
 
   useEffect(() => {
@@ -45,6 +48,10 @@ export default function MdrrmoSettings() {
       municipality: data.settings.municipality,
       province: data.settings.province,
       motto: data.settings.motto,
+    });
+    setUploadForm({
+      maxMB: String(data.settings.uploadMaxMB ?? 15),
+      formats: data.settings.uploadFormats ?? "pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,csv,txt,ppt,pptx",
     });
     setCriteria(data.criteria.map((c) => ({ key: c.key, name: c.name, maxScore: String(c.maxScore) })));
     setSeeded(true);
@@ -73,6 +80,36 @@ export default function MdrrmoSettings() {
       });
     } finally {
       setSavingGeneral(false);
+    }
+  };
+
+  const saveUploads = async () => {
+    const maxMB = Math.max(1, Math.min(100, Number(uploadForm.maxMB) || 15));
+    const formats = uploadForm.formats
+      .toLowerCase()
+      .split(",")
+      .map((f) => f.trim().replace(/^\.+/, ""))
+      .filter((f) => /^[a-z0-9]{2,5}$/.test(f));
+    if (formats.length === 0) {
+      toast({ title: "Enter at least one valid file extension (e.g., pdf, jpg)", variant: "destructive" });
+      return;
+    }
+    setSavingUploads(true);
+    try {
+      await api.adminSaveSettings({
+        settings: { uploadMaxMB: maxMB, uploadFormats: formats.join(",") },
+      });
+      // Keep the form in sync with what was actually saved (avoids re-seed race)
+      setUploadForm({ maxMB: String(maxMB), formats: formats.join(",") });
+      toast({ title: "File Library upload rules saved" });
+    } catch (e) {
+      toast({
+        title: "Failed to save upload rules",
+        description: e instanceof Error ? e.message : "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setSavingUploads(false);
     }
   };
 
@@ -161,6 +198,49 @@ export default function MdrrmoSettings() {
           <div className="sm:col-span-2">
             <Button disabled={savingGeneral} onClick={() => void saveGeneral()}>
               {savingGeneral ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Settings
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* File Library upload rules */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <FolderOpen className="h-4 w-4 text-primary" /> File Library Uploads
+          </CardTitle>
+          <CardDescription>
+            Upload rules for the File Library used by ALL users — barangays and MDRRMO personnel.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="set-maxmb">Maximum File Size (MB)</Label>
+            <Input
+              id="set-maxmb"
+              type="number"
+              min={1}
+              max={100}
+              value={uploadForm.maxMB}
+              onChange={(e) => setUploadForm((f) => ({ ...f, maxMB: e.target.value }))}
+            />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="set-formats">Allowed File Extensions</Label>
+            <Input
+              id="set-formats"
+              value={uploadForm.formats}
+              className="font-mono text-xs"
+              onChange={(e) => setUploadForm((f) => ({ ...f, formats: e.target.value }))}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Comma-separated list without dots — e.g. pdf, jpg, jpeg, png, gif, webp, doc, docx, xls, xlsx, csv, txt, ppt, pptx.
+              Applies to every File Library upload (barangay photos, reports and console uploads).
+            </p>
+          </div>
+          <div className="sm:col-span-2">
+            <Button disabled={savingUploads} onClick={() => void saveUploads()}>
+              {savingUploads ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Upload Rules
             </Button>
           </div>
         </CardContent>

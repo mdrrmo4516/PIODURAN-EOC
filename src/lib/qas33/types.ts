@@ -230,6 +230,59 @@ export interface OfficialItem {
   committee?: string | null;
 }
 
+// ---- File Library (documents & images uploaded by ANY user) ----
+
+export type FileCategory =
+  | "General"
+  | "Photo / Documentation"
+  | "Report"
+  | "Correspondence"
+  | "Supporting Document";
+
+export const FILE_CATEGORIES: FileCategory[] = [
+  "General",
+  "Photo / Documentation",
+  "Report",
+  "Correspondence",
+  "Supporting Document",
+];
+
+export const DEFAULT_UPLOAD_FORMATS =
+  "pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,csv,txt,ppt,pptx";
+
+export interface FileLibraryItem {
+  id: string;
+  ownerType: "BARANGAY" | "ADMIN";
+  ownerName: string;
+  barangay: { code: string; name: string } | null;
+  category: string;
+  title: string | null;
+  description: string | null;
+  originalName: string;
+  mimeType: string;
+  kind: "IMAGE" | "DOCUMENT";
+  size: number;
+  downloads: number;
+  createdAt: string;
+  canDelete: boolean;
+}
+
+export interface FileLibraryStats {
+  total: number;
+  images: number;
+  documents: number;
+  storageBytes: number;
+}
+
+export interface FileLibraryResponse {
+  files: FileLibraryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  stats: FileLibraryStats;
+  uploadConfig: { maxMB: number; formats: string };
+}
+
 export const OFFICIAL_POSITION_META: Record<string, { label: string; order: number }> = {
   PUNONG_BARANGAY: { label: "Punong Barangay", order: 1 },
   KAGAWAD: { label: "Kagawad", order: 2 },
@@ -403,6 +456,8 @@ export interface SettingValues {
   province: string;
   region: string;
   motto: string;
+  uploadMaxMB: number;
+  uploadFormats: string;
 }
 
 export interface TutorialItem {

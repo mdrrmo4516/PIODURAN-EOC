@@ -2,6 +2,7 @@
 import { randomBytes, scryptSync, createHash } from "crypto";
 import { promises as fs } from "fs";
 import path from "path";
+import zlib from "zlib";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import QRCode from "qrcode";
 import { db } from "../src/lib/db";
@@ -259,12 +260,61 @@ async function writeFile(key: string, buf: Buffer) {
   await fs.writeFile(abs, buf);
 }
 
+// Simple PNG generator (RGBA -> RGB truecolor, no interlace) for demo photos
+function pngChunk(type: Buffer, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length, 0);
+  const body = Buffer.concat([type, data]);
+  const crcTable: number[] = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crcTable[n] = c >>> 0;
+  }
+  let crc = 0xffffffff;
+  for (const byte of body) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  const crcBuf = Buffer.alloc(4);
+  crcBuf.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 0);
+  return Buffer.concat([len, body, crcBuf]);
+}
+
+async function makePlaceholderPng(w: number, h: number, seedLabel: string): Promise<Buffer> {
+  const rows: Buffer[] = [];
+  for (let y = 0; y < h; y++) {
+    const row = Buffer.alloc(1 + w * 3);
+    for (let x = 0; x < w; x++) {
+      // emerald-tinted gradient with soft diagonal bands
+      const t = (x / w + y / h) / 2;
+      const band = Math.sin((x + y) / 28 + seedLabel.length) * 0.06;
+      const r = Math.round(18 + 40 * t + band * 255) & 0xff;
+      const g = Math.round(120 + 90 * t + band * 255) & 0xff;
+      const b = Math.round(70 + 50 * t) & 0xff;
+      row[1 + x * 3] = r;
+      row[2 + x * 3] = g;
+      row[3 + x * 3] = b;
+    }
+    rows.push(row);
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type: truecolor
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    pngChunk(Buffer.from("IHDR"), ihdr),
+    pngChunk(Buffer.from("IDAT"), zlib.deflateSync(Buffer.concat(rows))),
+    pngChunk(Buffer.from("IEND"), Buffer.alloc(0)),
+  ]);
+}
+
 async function main() {
   console.log("Seeding QAS33 database...");
 
   // Wipe (FK-safe order)
   await db.downloadLog.deleteMany();
   await db.generatedDocument.deleteMany();
+  await db.storedFile.deleteMany();
   await db.rating.deleteMany();
   await db.reviewComment.deleteMany();
   await db.review.deleteMany();
@@ -307,7 +357,7 @@ async function main() {
       role: "SYSTEM_ADMIN",
     },
   });
-  await db.adminUser.create({
+  const staff = await db.adminUser.create({
     data: {
       username: "staff",
       passwordHash: hashSecret("Staff2026!"),
@@ -667,8 +717,38 @@ async function main() {
   // Admin overview notifications
   await db.notification.create({ data: { audience: "ADMIN", type: "SYSTEM", title: "Welcome to QAS33", body: `BDRRMP ${YEAR} cycle is open. 33 barangays are onboarded and credentials have been issued.`, createdAt: daysAgo(14, 8, 0) } });
 
+  // --- File Library samples (documents & images from all user types) ---
+  {
+    const officerMemo = await makePlaceholderPdf("Memorandum No. 2026-01", "BDRRMP 2026 Submission Timeline & Requirements");
+    let key = path.join("uploads", "library", "mdrrmo", `${randomBytes(6).toString("hex")}-Memorandum_BDRRMP2026_Timeline.pdf`);
+    await writeFile(key, officerMemo);
+    await db.storedFile.create({ data: { ownerType: "ADMIN", adminId: mdrrmo.id, ownerName: `${mdrrmo.name} (MDRRMO Officer)`, category: "Correspondence", title: "Memorandum: BDRRMP 2026 Submission Timeline", description: "Submission deadlines and required attachments for the 2026 BDRRMP cycle.", originalName: "Memorandum_BDRRMP2026_Timeline.pdf", storageKey: key, mimeType: "application/pdf", kind: "DOCUMENT", size: officerMemo.length, downloads: 4, createdAt: daysAgo(13, 9, 0) } });
+
+    const staffQat = await makePlaceholderPdf("QAT Orientation", "Quality Assurance Team — BDRRM Plan Evaluation Guide");
+    key = path.join("uploads", "library", "staff", `${randomBytes(6).toString("hex")}-QAT_Orientation_BDRRM_Plan.pdf`);
+    await writeFile(key, staffQat);
+    await db.storedFile.create({ data: { ownerType: "ADMIN", adminId: staff.id, ownerName: `${staff.name} (MDRRMO Staff)`, category: "Report", title: "QAT Orientation — BDRRM Plan Evaluation", description: "Reference slides used during the QAT orientation for evaluating BDRRM plans.", originalName: "QAT_Orientation_BDRRM_Plan.pdf", storageKey: key, mimeType: "application/pdf", kind: "DOCUMENT", size: staffQat.length, downloads: 2, createdAt: daysAgo(10, 14, 30) } });
+
+    // Buenavista (PD-BRG-006) — evacuation center photo + assembly resolution
+    const evacPhoto = await makePlaceholderPng(480, 320, "evac");
+    key = path.join("uploads", "library", "PD-BRG-006", `${randomBytes(6).toString("hex")}-evacuation_center_photo.png`);
+    await writeFile(key, evacPhoto);
+    await db.storedFile.create({ data: { ownerType: "BARANGAY", barangayId: barangays[5].id, ownerName: `Barangay ${barangays[5].name}`, category: "Photo / Documentation", title: "Buenavista Central School Evacuation Center", description: "Designated evacuation center — capacity 45 families. Photo taken during the Q1 inspection.", originalName: "evacuation_center_photo.png", storageKey: key, mimeType: "image/png", kind: "IMAGE", size: evacPhoto.length, downloads: 1, createdAt: daysAgo(6, 10, 15) } });
+
+    const resolution = await makePlaceholderPdf("Sangguniang Barangay Resolution No. 012-2026", "Barangay Buenavista — Adopting the Barangay DRRM Plan");
+    key = path.join("uploads", "library", "PD-BRG-006", `${randomBytes(6).toString("hex")}-SB_Resolution_012-2026.pdf`);
+    await writeFile(key, resolution);
+    await db.storedFile.create({ data: { ownerType: "BARANGAY", barangayId: barangays[5].id, ownerName: `Barangay ${barangays[5].name}`, category: "Supporting Document", title: "SB Resolution No. 012-2026 (Adopting the BDRRMP)", description: "Sangguniang Barangay resolution adopting the Barangay DRRM Plan for 2026.", originalName: "SB_Resolution_012-2026.pdf", storageKey: key, mimeType: "application/pdf", kind: "DOCUMENT", size: resolution.length, downloads: 0, createdAt: daysAgo(3, 15, 40) } });
+
+    // Baliana (PD-BRG-004) — flood documentation photo
+    const floodPhoto = await makePlaceholderPng(480, 320, "flood");
+    key = path.join("uploads", "library", "PD-BRG-004", `${randomBytes(6).toString("hex")}-flood_documentation_purok_3.png`);
+    await writeFile(key, floodPhoto);
+    await db.storedFile.create({ data: { ownerType: "BARANGAY", barangayId: barangays[3].id, ownerName: `Barangay ${barangays[3].name}`, category: "Photo / Documentation", title: "Flood Documentation — Purok 3", description: "Knee-deep flooding along the barangay road during the December habagat. Attached to the hazard assessment.", originalName: "flood_documentation_purok_3.png", storageKey: key, mimeType: "image/png", kind: "IMAGE", size: floodPhoto.length, downloads: 3, createdAt: daysAgo(9, 11, 5) } });
+  }
+
   const count = await db.barangay.count();
-  console.log(`Seed complete: ${count} barangays, ${await db.barangayOfficial.count()} council officials, ${await db.submission.count()} submissions, ${await db.auditLog.count()} audit entries.`);
+  console.log(`Seed complete: ${count} barangays, ${await db.barangayOfficial.count()} council officials, ${await db.submission.count()} submissions, ${await db.storedFile.count()} library files, ${await db.auditLog.count()} audit entries.`);
   console.log("Barangay login demo: PD-BRG-006 / QAS33-006 (Buenavista — final doc ready)");
   console.log("MDRRMO Officer: mdrrmo / PioDuran2026! (Noel F. Ordona — review & approve)");
   console.log("MDRRMO Staff: staff / Staff2026! (Jun Carlo Anasco — assists review)");

@@ -44,6 +44,8 @@ export async function PUT(request: NextRequest) {
       municipality: s.municipality ? String(s.municipality).slice(0, 80) : undefined,
       province: s.province ? String(s.province).slice(0, 80) : undefined,
       motto: s.motto ? String(s.motto).slice(0, 160) : undefined,
+      uploadMaxMB: Number(s.uploadMaxMB) || undefined,
+      uploadFormats: s.uploadFormats ? String(s.uploadFormats).toLowerCase().slice(0, 300) : undefined,
     });
     await logAudit({ actorType: "ADMIN", actorName: resolved.admin.name, action: "SETTINGS_UPDATED", detail: "System settings updated" });
   }

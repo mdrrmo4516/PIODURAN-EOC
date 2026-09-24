@@ -20,6 +20,7 @@ model AdminUser {
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+  storedFiles  StoredFile[]
 }
 
 // ============ BARANGAYS ============
@@ -40,6 +41,7 @@ model Barangay {
   submissions Submission[]
   auditLogs  AuditLog[]
   officials  BarangayOfficial[]
+  storedFiles StoredFile[]
 }
 
 // Sangguniang Barangay members (council) per barangay
@@ -264,6 +266,28 @@ model AuditLog {
   barangay   Barangay? @relation(fields: [barangayId], references: [id], onDelete: SetNull)
   ip         String?
   createdAt  DateTime @default(now())
+}
+
+// ============ FILE LIBRARY (documents & images uploaded by ANY user) ============
+
+model StoredFile {
+  id           String     @id @default(cuid())
+  ownerType    String     // BARANGAY | ADMIN
+  barangayId   String?
+  barangay     Barangay?  @relation(fields: [barangayId], references: [id], onDelete: SetNull)
+  adminId      String?
+  admin        AdminUser? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  ownerName    String     // "Barangay Bacong" | "Noel F. Ordona (MDRRMO Officer)"
+  category     String     @default("General") // General | Photo / Documentation | Report | Correspondence | Supporting Document
+  title        String?
+  description  String?
+  originalName String
+  storageKey   String
+  mimeType     String
+  kind         String     @default("DOCUMENT") // IMAGE | DOCUMENT
+  size         Int
+  downloads    Int        @default(0)
+  createdAt    DateTime   @default(now())
 }
 
 // ============ TUTORIALS ============

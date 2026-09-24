@@ -10,6 +10,8 @@ const DEFAULT_SETTINGS: SettingValues = {
   province: "Albay",
   region: "Bicol Region (Region V)",
   motto: "Faster. Simpler. Transparent.",
+  uploadMaxMB: 15,
+  uploadFormats: "pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,csv,txt,ppt,pptx",
 };
 
 export async function getSettings(): Promise<SettingValues> {

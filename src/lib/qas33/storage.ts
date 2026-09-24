@@ -24,6 +24,16 @@ export async function saveUploadedFile(
   return key;
 }
 
+// File Library — shared uploads from ANY authenticated user (barangay or console)
+// scope = barangay code (e.g. PD-BRG-006) or admin username
+export async function saveSharedFile(buffer: Buffer, scope: string, originalName: string): Promise<string> {
+  const key = path.join("uploads", "library", sanitizeFilename(scope), `${randomBytes(8).toString("hex")}-${sanitizeFilename(originalName)}`);
+  const abs = path.join(STORAGE_ROOT, key);
+  await fs.mkdir(path.dirname(abs), { recursive: true });
+  await fs.writeFile(abs, buffer);
+  return key;
+}
+
 export async function readStoredFile(storageKey: string): Promise<Buffer> {
   const abs = path.join(STORAGE_ROOT, storageKey);
   // prevent path traversal

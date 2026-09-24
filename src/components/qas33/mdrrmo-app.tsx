@@ -9,6 +9,7 @@ import {
   Building2,
   ClipboardList,
   Database,
+  FolderOpen,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -37,6 +38,7 @@ import MdrrmoReview from "./mdrrmo-review";
 import MdrrmoSettings from "./mdrrmo-settings";
 import MdrrmoTutorials from "./mdrrmo-tutorials";
 import MdrrmoUsers from "./mdrrmo-users";
+import FileLibrary from "./file-library";
 
 type ViewKey =
   | "dashboard"
@@ -46,6 +48,7 @@ type ViewKey =
   | "tutorials"
   | "reports"
   | "notifications"
+  | "files"
   | "users"
   | "database"
   | "audit"
@@ -62,6 +65,7 @@ const NAV: { key: ViewKey; label: string; icon: typeof Bell }[] = [
   { key: "tutorials", label: "Tutorials", icon: BookOpen },
   { key: "reports", label: "Reports", icon: BarChart3 },
   { key: "notifications", label: "Notifications", icon: Bell },
+  { key: "files", label: "File Library", icon: FolderOpen },
   { key: "users", label: "Users", icon: Users },
   { key: "database", label: "Database", icon: Database },
   { key: "audit", label: "Audit Logs", icon: ScrollText },
@@ -261,6 +265,8 @@ export default function MdrrmoApp({ session, onLogout }: { session: SessionInfo;
             <MdrrmoReports />
           ) : view === "notifications" ? (
             <MdrrmoNotifications onRead={refreshUnread} />
+          ) : view === "files" ? (
+            <FileLibrary session={session} />
           ) : view === "users" ? (
             <MdrrmoUsers session={session} />
           ) : view === "database" ? (

@@ -1,3 +1,5 @@
+249 /home/z/my-project/worklog.md
+---LAST 250 LINES---
 # QAS33 – BDRRMP System Worklog
 
 Project: QAS33 – Barangay DRRM Plan Review, Tracking, Submission & Management System
@@ -247,36 +249,3 @@ Stage Summary:
   6. MDRRMO Officer (Noel F. Ordona, mdrrmo/PioDuran2026!) — reviews AND approves BDRRMP (rate/approve/sign/finalize).
   7. Requirements module renamed to References (admin + barangay UIs).
   8. 33 real barangay names + council members: barangay names are the official 33 of Pio Duran; council members are realistic PLACEHOLDERS (the referenced PDF official-list_05_2026-09-24.pdf was NOT found on the server — upload folder empty). 363 officials seeded (11/barangay), editable via Database Management (barangay_officials table) or re-seed when the official list is provided.
-
----
-Task ID: 14
-Agent: main
-Task: File Library for ALL users (document/image uploads), Users module Barangay Accounts tab, File Library settings; attachments re-check
-
-User requirements (this round):
-1. Add option to upload documents & images for ALL users (barangay + all console roles)
-2. System Administrator can configure the role of ALL users
-3. New attachments (official-list_05_2026-09-24_organized.md, A/C/E .docx templates) — checked
-
-Work Log:
-- Attachments: /home/z/my-project/upload is EMPTY again (fresh mount; filesystem-wide search by subagent found none of the 4 files). Council members remain seeded PLACEHOLDERS (363 officials, 11/barangay, editable via Database Management); docx templates not imported. User must re-upload for real council data.
-- Schema: new StoredFile model (ownerType BARANGAY|ADMIN, barangay/admin FKs w/ SetNull, ownerName, category, title, description, originalName, storageKey, mimeType, kind IMAGE|DOCUMENT, size, downloads, createdAt) + relations on Barangay/AdminUser. db:push done; dev server restarted (stale Prisma client).
-- storage.ts: saveSharedFile() under uploads/library/<scope>/<rand>-<name>.
-- types.ts: FileCategory + FILE_CATEGORIES (General | Photo / Documentation | Report | Correspondence | Supporting Document), DEFAULT_UPLOAD_FORMATS, FileLibraryItem/FileLibraryStats/FileLibraryResponse (+uploadConfig), SettingValues + uploadMaxMB/uploadFormats.
-- server.ts defaults: uploadMaxMB 15, uploadFormats pdf,jpg,jpeg,png,gif,webp,doc,docx,xls,xlsx,csv,txt,ppt,pptx. Settings PUT whitelist extended (sysadmin-only, as all settings).
-- NEW /api/files (GET list w/ search+category+kind+scope+barangayCode filters, pagination, stats, uploadConfig; POST multipart upload validating ext+size vs settings; DELETE owner-or-sysadmin) + /api/files/download (auth-gated; barangay restricted to own files; inline for images/pdf; increments downloads). Audit: FILE_UPLOADED/FILE_DELETED/FILE_DOWNLOADED.
-- api.ts: filesList/fileUpload/fileDelete/fileDownloadUrl. db-tables.ts: stored_files registry entry (20 tables now).
-- NEW src/components/qas33/file-library.tsx (~700 lines, shared component): stats chips (total/images/documents/storage), toolbar (debounced search, category+kind selects, admin scope All|Barangay uploads|My uploads + barangay picker), responsive card grid (image thumbnails via authenticated download URL, per-type document icons), download links, delete w/ confirm, drag&drop upload dialog (category/title/description, client+server validation), pagination, empty/error/skeleton states.
-- barangay-app.tsx: new "Files" tab (FileUp icon) rendering FileLibrary. mdrrmo-app.tsx: new "File Library" nav item (FolderOpen) visible to ALL console roles (not in SYSADMIN_ONLY_KEYS).
-- mdrrmo-users.tsx: restructured into Tabs — "Console Users" (existing role editing) + NEW "Barangay Accounts" tab (33 accounts: PB name, Account status, Access PIN status incl. Temp PIN pending, Lockout, Last Login; actions Reset PIN (one-time temp PIN dialog w/ CopyButton), Clear Lockout, Revoke/Re-activate PIN, Disable/Enable Account; search). Sysadmin now configures ALL users in one module.
-- mdrrmo-settings.tsx: NEW "File Library Uploads" card (max MB + allowed extensions, validated); fixed post-save form sync race (setUploadForm directly after save).
-- seed.ts: staff user captured to variable; File Library samples (officer memo PDF, staff QAT PDF, Buenavista evac-center PNG + SB resolution PDF, Baliana flood PNG) via new makePlaceholderPng (pure-Node PNG encoder w/ zlib); storedFiles wipe added.
-- Verification: backend curl suite all-pass (barangay sees own only; cross-barangay download/delete 403; officer delete-of-barangay-file 403; invalid ext 400; sysadmin delete-any ok; scope filters; download headers+count). tsc 0 errors; lint 0 errors; dev.log clean.
-- agent-browser E2E all-pass: barangay PD-BRG-006 Files tab (2 seeded files render, image thumbnails load 480x320/120x80, upload "Purok 4 Coastal Photo" via dialog + title, appears in grid, delete w/ confirm gone); officer File Library (all 5 files w/ owner labels, My-uploads scope -> only his memo, nav excludes Users/Settings/Database); staff sees File Library; sysadmin File Library shows Delete on ALL 5 files; Users > Barangay Accounts (33 rows, Albasan "Temp PIN pending", Reset PIN -> one-time dialog QAS33-XXXXXX + copy); Settings > File Library Uploads save (15->20->25MB verified via API + form sync after race fix); mobile 390px no horizontal overflow; VLM visual QA (Users tab PASS; card-height claim disproven programmatically — all cards 384px; "floating avatar" is dev-only Next.js tools button); 0 console/page errors.
-- Re-seeded pristine (restores Bacong PIN, settings 15MB default, removes E2E mutations).
-
-Stage Summary:
-- File Library live for every user type: barangays (Files tab) + Officer/Staff/SysAdmin (File Library nav). Upload docs & images, browse/filter/search, download, owner-or-sysadmin delete; barangay-isolated; audit-logged; sysadmin-configurable rules (Settings).
-- Users module now covers ALL users: Console Users (roles) + Barangay Accounts (PIN/access lifecycle).
-- Database Management: 20 tables incl. File Library.
-- STILL PENDING from user: real council-member list + docx template contents (attachments never arrived on the server — ask user to re-upload).

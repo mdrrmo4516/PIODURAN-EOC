@@ -7,6 +7,7 @@ import {
   Bell,
   BookOpen,
   FileText,
+  FileUp,
   FolderOpen,
   KeyRound,
   LayoutDashboard,
@@ -31,6 +32,7 @@ import type {
 import { CommentsTab, DocumentsTab, NotificationsTab, ProfileTab } from "./barangay-misc";
 import { DashboardTab, RequirementsTab, TutorialsTab } from "./barangay-tabs";
 import { LoadError, errMsg } from "./barangay-shared";
+import FileLibrary from "./file-library";
 import BarangayWizard from "./barangay-wizard";
 
 const TABS = [
@@ -38,6 +40,7 @@ const TABS = [
   { key: "wizard", label: "My BDRRMP", icon: FileText },
   { key: "requirements", label: "References", icon: ListChecks },
   { key: "tutorials", label: "Tutorials", icon: BookOpen },
+  { key: "files", label: "Files", icon: FileUp },
   { key: "documents", label: "Documents", icon: FolderOpen },
   { key: "comments", label: "Comments", icon: MessageSquare },
   { key: "notifications", label: "Notifications", icon: Bell },
@@ -285,6 +288,8 @@ export default function BarangayApp({
           ))}
 
         {tab === "tutorials" && <TutorialsTab />}
+
+        {tab === "files" && <FileLibrary session={session} />}
 
         {tab === "documents" && <DocumentsTab lang={lang} onRefreshOverview={loadOverview} />}
 

@@ -12,6 +12,8 @@ import type {
   CommentItem,
   SettingValues,
   TutorialItem,
+  FileLibraryResponse,
+  FileLibraryItem,
 } from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -308,6 +310,38 @@ export const api = {
     }),
   adminDatabaseDelete: (table: string, id: string) =>
     request<{ ok: boolean }>(`/api/admin/database/${table}/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+  // ---- file library (ALL users — barangay + every console role) ----
+  filesList: (params: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    category?: string;
+    kind?: string;
+    scope?: string; // all | mine | barangay-uploads (admin only)
+    barangayCode?: string; // admin filter
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.page) qs.set("page", String(params.page));
+    if (params.pageSize) qs.set("pageSize", String(params.pageSize));
+    if (params.search) qs.set("search", params.search);
+    if (params.category && params.category !== "ALL") qs.set("category", params.category);
+    if (params.kind && params.kind !== "ALL") qs.set("kind", params.kind);
+    if (params.scope) qs.set("scope", params.scope);
+    if (params.barangayCode) qs.set("barangayCode", params.barangayCode);
+    return request<FileLibraryResponse>(`/api/files?${qs.toString()}`);
+  },
+  fileUpload: (payload: { file: File; category: string; title?: string; description?: string }) => {
+    const form = new FormData();
+    form.append("file", payload.file);
+    form.append("category", payload.category);
+    if (payload.title) form.append("title", payload.title);
+    if (payload.description) form.append("description", payload.description);
+    return request<{ ok: boolean; file: FileLibraryItem }>("/api/files", { method: "POST", body: form });
+  },
+  fileDelete: (id: string) =>
+    request<{ ok: boolean }>(`/api/files?id=${encodeURIComponent(id)}`, { method: "DELETE" }),
+  fileDownloadUrl: (id: string) => `/api/files/download?id=${encodeURIComponent(id)}`,
 
   // ---- public ----
   verify: (docId: string) =>

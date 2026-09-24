@@ -1,0 +1,210 @@
+40: - All endpoints tested via curl: login, overview, submissions, audit, settings, reports, document download (valid 20KB PDF), verify.
+41: 
+42: Stage Summary:
+43: - Backend complete and verified. Demo accounts: barangay PD-BRG-006/QAS33-006 (final doc ready), PD-BRG-004/QAS33-004 (needs revision), PD-BRG-001/QAS33-001 (forced PIN change demo), admin mdrrmo/PioDuran2026!.
+44: - Frontend contract: page.tsx (I will write) renders Landing | BarangayApp | MdrrmoApp based on /api/auth/me.
+45: 
+46: ---
+47: Task ID: 9-a
+48: Agent: frontend-styling-expert
+49: Task: Landing page + login dialogs + document verification
+50: Work Log:
+51: - Read worklog.md, src/lib/qas33/api.ts, src/lib/qas33/types.ts; inspected available shadcn/ui components, use-toast hook, layout.tsx (Toaster already mounted), eslint config, button/badge/dialog/accordion/card/alert APIs.
+52: - Created src/components/qas33/landing.tsx (single "use client" file, ~1190 lines) with: gov identity strip (Republic of the Philippines • Province of Albay • Municipality of Pio Duran • MDRRMO), sticky header (ShieldCheck logo mark + QAS33 / BDRRMP Monitoring System + Verify Document ghost btn), emerald-950→700 gradient hero (grid pattern + glows, badge, H1, subtitle, italic tagline quote, white/outline CTAs, 4-cell stats: 33 / 2026 / 12 / QR), How It Works (6 numbered cards, LogIn/FileText/FileCheck/Send/MessageSquareWarning/Download icons), Features strip (Zap/MousePointerClick/Eye/
+53: - BarangayLoginDialog: code+PIN form → api.loginBarangay → api.me(); if session.mustChangePin switches to forced PIN-change step (Current/New(min 6)/Confirm) → api.changePin → toast "PIN changed" → api.me() → onAuth; destructive toasts on all errors; state resets on reopen.
+54: - AdminLoginDialog: username+password → api.loginAdmin → api.me() → onAuth, same error/loading (Loader2 spin) handling; both dialogs use <form> so Enter submits.
+55: - Tasteful framer-motion: hero fade-up, staggered whileInView reveals; CSS hover transitions on cards. Strict TS (no any), imports only from react/lucide-react/framer-motion/@/components/ui/@/lib/qas33/@/hooks/use-toast.
+56: Verification:
+57: - bunx tsc --noEmit: 0 errors in landing.tsx. bunx eslint landing.tsx: PASS.
+58: - curl /api/verify?docId=QAS33-BDRRMP-26-006-V2 → valid:true (Buenavista, V2, VALID — APPROVED, signed Jose R. Salazar); invalid ID → {"valid":false,"error":"No document found..."}.
+59: - curl-tested full dialog flows: barangay login PD-BRG-001 (mustChangePin:true) → me() mustChangePin:true → change-pin wrong current → "Current PIN is incorrect."; admin login/logout ok; wrong PIN → "4 attempt(s) remaining before lockout."; re-confirmed PD-BRG-006 still logs in (counter reset).
+60: - SSR smoke render via bun (renderToString): renders 30,330 chars HTML, all key sections present (demo credentials only render when accordion expanded — expected Radix behavior).
+61: 
+62: Stage Summary:
+63: - Files created: src/components/qas33/landing.tsx (only file; nothing else touched).
+64: - Key decisions: emerald-900/950→700 hero gradient with subtle SVG grid + glow accents, amber reserved for feature icons/demo accordion/PIN-change header; landing layout min-h-screen flex-col with mt-auto footer; VerifyResult type derived via Awaited<ReturnType<typeof api.verify>>; clipboard copy with fallback; dialogs reset state on open; auto-verify effect guarded by ref (runs once) and smooth-scrolls to result for QR arrivals.
+65: - Ready for wiring: page.tsx should render <Landing initialVerifyDocId={verifyParam} onAuth={setSession} /> when /api/auth/me returns no session; QR links use /?verify=<docId>.
+66: 
+67: ---
+68: Task ID: 9-c
+69: Agent: full-stack-developer
+70: Task: MDRRMO admin console UI
+71: Work Log:
+72: - Read worklog + contracts (api.ts, types.ts) and inspected live API responses (overview, submissions, submission detail, barangays, settings, requirements, tutorials, notifications, audit, reports CSV) with the mdrrmo test account.
+73: - Read backend routes (review/rating/finalize/barangays[id]/settings/requirements/tutorials) to confirm exact payload semantics and allowed status transitions before wiring actions.
+74: - Built 12 client components in src/components/qas33/ (mdrrmo-app + 11 views/shared, see agent-ctx/9-c-full-stack-developer.md for the full map): shell (sticky header w/ bell + sidebar + mobile nav, Review Queue default), Dashboard, Barangays (credential mgmt + temp-PIN dialog), Review Queue (chips + contextual actions), Review Detail (accordion sections, comment flow w/ sticky pending bar, evaluation tab, history tab, finalize & sign flow w/ success dialog), Requirements + Template Preview, Tutorials, Reports (CSV/print), Notifications, Users, Audit Logs (load-more), Settings (general + crite
+75: - Fixed all TS errors (Skeleton import, status narrowing, DocumentInfo.signatureHash not in contract) and all lint errors from the new react-hooks v6 rules (set-state-in-effect, refs-in-render) by moving fetch state updates into promise callbacks, resetting filters in event handlers, and seeding dialog forms via remount keys.
+76: - Verified: bunx tsc --noEmit → 0 mdrrmo errors; bun run lint → 0 mdrrmo problems; SSR smoke test (renderToString) 12/12 components pass; dev.log clean.
+77: Stage Summary:
+78: - Files created: src/components/qas33/mdrrmo-{app,shared,dashboard,barangays,queue,review,requirements,tutorials,reports,notifications,users,audit,settings}.tsx (13 files incl. shared) + agent-ctx/9-c-full-stack-developer.md.
+79: - Key decisions: contract-driven UI (no signatureHash display since payload lacks it; requirement descriptions read-only since PUT ignores them; revision requires ≥1 pending comment per backend); Regenerate only for READY_FOR_DOWNLOAD (finalize 409s on DOWNLOADED); stale-while-revalidate useLoad hook to satisfy react-hooks/set-state-in-effect; approve gated on saved rating w/ tooltip.
+80: - Integration: page.tsx should render <MdrrmoApp session={session} onLogout={...} /> when session.role === "ADMIN" (landing.tsx + barangay-app.tsx from 9-a/9-b already exist). Toaster already mounted in layout.tsx.
+81: 
+82: ---
+83: Task ID: 9-b (recorded by main on behalf of agent — agent completed all files but hit tool timeout before reporting)
+84: Agent: full-stack-developer
+85: Task: Barangay portal UI
+86: Work Log:
+87: - Created src/components/qas33/barangay-app.tsx (shell: header, tab nav, data loading, notifications bell) + barangay-wizard.tsx (template selection, section nav, autosave, pre-submission check, preview, submit w/ certification) + barangay-fields.tsx (field renderer by type) + barangay-upload.tsx (file upload w/ validation) + barangay-check.tsx + barangay-preview.tsx + barangay-shared.tsx + barangay-tabs.tsx (dashboard/requirements/tutorials) + barangay-misc.tsx (comments/documents/notifications/profile).
+88: - Agent's own browser test screenshots in /tmp/qas33-b*.png (b6=Buenavista, b4=Baliana, b9=Albasan) — template select, wizard, pre-check, preview, documents, comments, notifications all verified.
+89: Stage Summary:
+90: - 10 files, ~3,500 lines. Full barangay workflow implemented incl. Tagalog localization, locked states by status, revision highlighting, download control.
+91: 
+92: ---
+93: Task ID: 10-12
+94: Agent: main
+95: Task: Integration, page.tsx wiring, fixes, E2E browser verification, re-seed
+96: 
+97: Work Log:
+98: - Fixed backend issues: AuditLog→Barangay relation (schema + push + client regen + dev server restart); SectionDef optional uploadFormats/uploadMaxMB; admin detail now returns per-section complete/uploadStatus (computeSectionProgress in admin-service); removed invalid lineSpacing from pdf.ts.
+99: - page.tsx: session bootstrap via /api/auth/me, client-side switch Landing | BarangayApp | MdrrmoApp; ?verify=DOCID QR links always show public verification view with "Return to your console" banner for signed-in users.
+100: - Dev server keep-alive: processes spawned by tool commands die at command end; started via `( setsid bash -c 'exec bun run dev' </dev/null >>/tmp/dev-start.log 2>&1 & )` — survives.
+101: - E2E verified with agent-browser (all passed):
+102:   1. Landing renders; verify widget + sample ID → VALID card; anonymous QR URL auto-verifies.
+103:   2. Barangay login PD-BRG-006 → Tagalog dashboard, all sections complete, Documents tab w/ docId + download log; download API returns valid PDF, status → DOWNLOADED.
+104:   3. Admin login → Review Queue; Bacong: Start Review → Evaluation 94/100 saved → Approve → Finalize & Sign (signatory prefill) → PDF generated QAS33-BDRRMP-26-002 + QR verify link valid; Bacong barangay then sees Ready for Download.
+105:   4. Baliana (NEEDS_REVISION): saw comments, fixed flood household value, Pre-Submission Check passed, Preview, certified + Resubmitted v2.
+106:   5. Albasan PD-BRG-001: forced first-time PIN change flow works.
+107:   6. Admin: PIN reset issues one-time temp PIN dialog; Barangays table; Dashboard stats; Reports w/ CSV export + print; Audit Logs show full trail (PIN_RESET, LOGGED_IN, RESUBMITTED, APPROVED, RATED, FINALIZED...); Settings (plan year, signatory, criteria).
+108:   7. Mobile viewport 390x844 renders correctly (landing + admin).
+109:   8. VLM visual audit: professional, consistent emerald theme, no overlap/bugs.
+110:   9. lint: 0 errors; tsc: 0 src errors; dev.log: no runtime errors.
+111: - Re-seeded DB for pristine demo state (removes test mutations; restores intended demo narrative).
+112: 
+113: Stage Summary:
+114: - QAS33 complete and browser-verified end-to-end. Demo accounts: PD-BRG-006/QAS33-006 (ready for download), PD-BRG-004/QAS33-004 (needs revision), PD-BRG-002/QAS33-002 (submitted), PD-BRG-001/QAS33-001 (forced PIN change), PD-BRG-008/QAS33-008 (draft), admin mdrrmo/PioDuran2026!, sysadmin/SysAdmin2026!.
+115: 
+116: ---
+117: Task ID: 13 (in progress)
+118: Agent: main
+119: Task: Role system (MDRRMO Officer/Staff/System Admin), Database Management module, full-width layout, Requirements→References rename, real barangay council data
+120: 
+121: User requirements:
+122: 1. Full-width pages (remove max-w containers)
+123: 2. Database management module (CRUD) — SYSTEM_ADMIN only
+124: 3. New role MDRRMO Staff (Jun Carlo Anasco)
+125: 4. System admin login credential + default admin (Tho Pogi)
+126: 5. Only System Administrator can: edit roles, setup/configure all settings, CRUD the database
+127: 6. MDRRMO Officer (Noel F. Ordona): review and approve BDRRMP
+128: 7. Rename "Requirements" module to "References"
+129: 8. 33 real barangay names + council members (PDF official-list_05_2026-09-24.pdf NOT found on server — upload folder empty; will seed placeholder councils editable via Database module and notify user)
+130: 
+131: Plan:
+132: - Backend (main): schema (AdminUser roles SYSTEM_ADMIN|MDRRMO_OFFICER|MDRRMO_STAFF + BarangayOfficial model), auth role helpers, /api/admin/database* CRUD, /api/admin/users* role editing, role gating on review/approve/finalize/settings/requirements/tutorials, officials in barangay+admin APIs, seed rewrite
+133: - Frontend A (subagent): mdrrmo-database.tsx (new) + mdrrmo-users.tsx (rewrite w/ role editing)
+134: - Frontend B (subagent): role gating in review/barangays/requirements/tutorials, barangay app (References rename, council card, full width), landing (full width, 3 demo accounts, References wording)
+135: - mdrrmo-app.tsx shell (main): full width + role-based NAV + database tab + role badge
+136: 
+137: ---
+138: Task ID: 13-backend
+139: Agent: main
+140: Task: Backend for roles, database management, users API, councils, gating
+141: 
+142: Work Log:
+143: - Schema: AdminUser.role values now SYSTEM_ADMIN | MDRRMO_OFFICER | MDRRMO_STAFF; new BarangayOfficial model (name, position PUNONG_BARANGAY|KAGAWAD|SK_CHAIRPERSON|SECRETARY|TREASURER, committee, order). db:push done.
+144: - auth.ts: AdminRole type, normalizeAdminRole (legacy MDRRMO_ADMIN→MDRRMO_OFFICER), isSystemAdmin, canReviewBdrrmp (OFFICER+STAFF), canApproveBdrrmp (OFFICER), requireAdminRole([...]); ResolvedSession.admin now includes username.
+145: - NEW src/lib/qas33/db-tables.ts: registry of 19 tables (key/model/label/group/fields with types+required+nullable+readonly+fk hints) + generic CRUD service (listTables w/ counts, listRows w/ pagination+search, coerceRowData validation per field type incl. JSON validation, create/update/delete with FK/UNIQUE friendly errors, admin_users guardrails: cannot delete self/sysadmin/last SYSTEM_ADMIN).
+146: - NEW routes: GET /api/admin/database (tables+counts, SYSADMIN only); GET/POST /api/admin/database/[table] (rows paginated+search, create); PUT/DELETE /api/admin/database/[table]/[id] (update/delete). All audit-logged as DB_CREATE/DB_UPDATE/DB_DELETE.
+147: - NEW routes: GET/POST /api/admin/users (list, create w/ role); PUT/DELETE /api/admin/users/[id] (edit name/position/ROLE/active, password reset w/ session revocation; delete w/ guardrails: no self-delete, no sysadmin delete, no last-SYSTEM_ADMIN delete/demote/disable).
+148: - Role gating applied: settings PUT→SYSADMIN; requirements PUT→SYSADMIN; tutorials GET/PUT→SYSADMIN; review start/comment/revision→OFFICER+STAFF, approve/archive→OFFICER; rating→OFFICER+STAFF; finalize→OFFICER. Removed user ops from settings PUT.
+149: - types.ts: AdminRole, ADMIN_ROLE_META (labels+badges), normalizeAdminRole/isSystemAdmin/canReviewBdrrmp/canApproveBdrrmp (client-safe), SessionInfo.admin.username, OfficialItem + OFFICIAL_POSITION_META, BarangayOverview.officials, AdminBarangayRow.officials.
+150: - Services: buildOverview + listBarangayRows include officials.
+151: - api.ts: adminUsers/adminCreateUser/adminUpdateUser/adminDeleteUser, adminDatabaseTables/adminDatabaseRows/adminDatabaseCreate/adminDatabaseUpdate/adminDatabaseDelete.
+152: - seed.ts: 3 named users (mdrrmo/Noel F. Ordona/MDRRMO_OFFICER/PioDuran2026!, sysadmin/Tho Pogi/SYSTEM_ADMIN/SysAdmin2026!, staff/Jun Carlo Anasco/MDRRMO_STAFF/Staff2026!); 363 council officials (11 per barangay: PB+7 kagawads w/ committees+SK+sec+treasurer; PLACEHOLDER names — official PDF not on server); fullValues uses real council names for BDRRMC fields; signatory Noel F. Ordona.
+153: - Fixed pre-existing saveSettings bug (partial settings payload wiped other keys / crashed upsert).
+154: - Fixed settings/users/tutorials gating + dev server restart (cached Prisma client needed restart after schema push).
+155: 
+156: Stage Summary:
+157: - All backend verified via curl: 3-role login, DB CRUD create/update/delete/search/pagination, role gating 403s (sysadmin read-only review, staff no approve/finalize, officer full review+approve+finalize, settings/users/db sysadmin-only), officials in overview + admin rows, users role editing + guardrails. Re-seeded pristine.
+158: - Frontend contract ready: api.ts methods above; types ADMIN_ROLE_META/OfficialItem; NAV plan: sysadmin sees Users/Settings/Database, Requirements→References rename.
+159: 
+160: ---
+161: Task ID: 13-b
+162: Agent: frontend-role-gating-agent
+163: Task: Frontend B for role system — full-width layouts, role-gated console UI (Review/References/Tutorials), References rename, barangay council card, landing demo accounts
+164: 
+165: Work Log (files touched — ONLY the 12 assigned files; mdrrmo-database.tsx/mdrrmo-users.tsx untouched):
+166: - mdrrmo-app.tsx: removed max-w-[1600px] (full width); NAV "Requirements"→"References" (ListChecks kept); added { key: "database", label: "Database", icon: Database } + ViewKey "database"; role-based nav filtering via normalizeAdminRole/isSystemAdmin + SYSADMIN_ONLY_KEYS set (users/settings/database hidden for OFFICER/STAFF, both desktop sidebar + mobile tabs); header role badge from ADMIN_ROLE_META (full label under name on sm+, short badge on mobile); renders <MdrrmoDatabase /> for database view; passes session to MdrrmoReview/MdrrmoRequirements/MdrrmoTutorials/MdrrmoUsers. Default view st
+167: - mdrrmo-review.tsx: session prop; roleCanReview=canReviewBdrrmp, roleCanApprove=canApproveBdrrmp; Start Review/Add Comments/Request Revision/section comment boxes/Submit Comments gated to roleCanReview; Approve/Finalize/Regenerate/Archive gated to roleCanApprove (kept hasRating prerequisite for Approve); sticky bar shows for canComment; SYSTEM_ADMIN sees subtle "Read-only — reviews are performed by the MDRRMO Officer and Staff." dashed notice in the actions area; MDRRMO_STAFF sees muted "Approval requires the MDRRMO Officer." hint (header actions when officerActionStatus + always in sticky 
+168: - mdrrmo-requirements.tsx: renamed user-facing wording Requirements→References (title "References & Template", "Template Sections & References", preview copy "fields and upload rules"); session prop + canEdit=isSystemAdmin; toggles/Edit column/Edit dialog render only when canEdit (static Yes/No for non-editors); read-only note "Reference configuration is managed by the System Administrator." (Lock icon) for officer/staff; internal api.adminRequirements/adminUpdateRequirement untouched.
+169: - mdrrmo-tutorials.tsx: session prop; split into TutorialsManager (sysadmin, full edit controls — active toggles, Edit dialog) + TutorialsReadonly (Lock note "Tutorial content is managed by the System Administrator." + explanatory card). DEVIATION NOTE: /api/admin/tutorials GET is SYSTEM_ADMIN-only in the backend (13-backend), so officer/staff cannot load the list at all — instead of showing a 403 error the non-sysadmin view renders the read-only note without calling the API (nav item stays visible to all console roles per spec).
+170: - barangay-app.tsx: removed max-w-7xl from all 5 layout containers (header/tab nav/PIN notice/main/footer — kept px paddings); tab label "Requirements"→"References" (tab key "requirements" kept); LoadError "Failed to load references".
+171: - barangay-tabs.tsx: all user-facing Requirements→References (View References button, stats card, References Checklist card, References tab heading + comments); Tagalog "Mga Kailangan" kept; NEW "Barangay Council / Sangguniang Barangay" dashboard card (Users icon) listing overview.officials sorted by OFFICIAL_POSITION_META order (PB emphasized with border-primary/40 bg-primary/5 + font-semibold; position label small muted; committee smaller muted) with max-h-96 overflow-y-auto list + EmptyState fallback; placed in right column above MDRRMO Comments.
+172: - barangay-check.tsx: "every requirement is complete"→"every reference item is complete"; "All requirements complete"→"All references complete"; "once all requirements are complete"→"once all references are complete" (check logic untouched).
+173: - barangay-shared.tsx: READY_FOR_SUBMISSION hint "All requirements complete"→"All references complete"; comment updates.
+174: - barangay-wizard.tsx: comment-only update. barangay-misc.tsx/barangay-preview.tsx: no user-facing "requirements" strings found (grep-verified) — untouched.
+175: - landing.tsx: CONTAINER dropped max-w-6xl (full-width sections, footer spans viewport); DEMO_ACCOUNTS now 4 (Barangay Portal Buenavista PD-BRG-006/QAS33-006; MDRRMO Officer mdrrmo/PioDuran2026!; MDRRMO Staff staff/Staff2026!; System Administrator sysadmin/SysAdmin2026! — PD-BRG-004 removed); AdminLoginDialog retitled "MDRRMO / Administrator Login" with 3-role description + "Sign In to Console" button. No module-name "Requirements" wording existed on landing (grep-verified).
+176: 
+177: Verification (all passed):
+178: - bunx tsc --noEmit → 0 errors in src/ (only pre-existing examples/ + skills/ errors). bun run lint → 0 errors.
+179: - Browser E2E (agent-browser; isolated session for officer/sysadmin/barangay after noticing the parallel agent shares the default session):
+180:   a. Landing full-width (scrollWidth=viewport 1440), accordion shows all 4 accounts w/ labels+notes, copy chip → "Copied to clipboard" toast. Dialog title "MDRRMO / Administrator Login" confirmed.
+181:   b. Officer (mdrrmo): badge "MDRRMO Officer"; nav has References, NO Users/Settings/Database. Bacong SUBMITTED → Start Review → UNDER_REVIEW; evaluation 92/100 saved → Approve enabled → approved → "Finalize Document" + "Archive" visible. /tmp/officer.png.
+182:   c. Staff (staff): badge "MDRRMO Staff"; no Users/Settings/Database. Bagumbayan UNDER_REVIEW → Add Comments + Request Revision + comment box present, Approve/Finalize absent, hint "Approval requires the MDRRMO Officer." present ×2 (actions + sticky bar). /tmp/staff.png.
+183:   d. Sysadmin (sysadmin): badge "System Administrator"; nav WITH Users, Database, Settings. References shows edit controls (11 Edit buttons, 22 switches — sysadmin is the editor per spec); submission (Bagumbayan) → read-only notice, 0 review action buttons, Evaluation tab inputs disabled + no Save + note. Officer References re-check: 0 switches/0 Edit buttons + read-only note (the read-only state belongs to officer/staff — verification step (d) wording appears to have mixed roles; backend PUT allows ONLY sysadmin). /tmp/sysadmin.png.
+184:   e. Barangay PD-BRG-006: full-width, References tab label, Barangay Council card with 11 officials (PB highlighted, 7 Kagawads w/ committees, SK, Secretary, Treasurer order; max-h-96 scroll). /tmp/barangay.png.
+185:   f. Mobile 390×844 spot check: short role badge "Officer", filtered mobile nav, no horizontal overflow. dev.log tail: no runtime errors. mdrrmo-database.tsx stub was already replaced by the parallel agent mid-test (Database Management w/ table counts renders — not my work, not modified by me).
+186: - DB side effects from testing (expected per task): Bacong PD-BRG-002 now APPROVED w/ 92/100 rating + review trail (officer flow demo); Bagumbayan unchanged (only viewed). Re-seed if pristine demo narrative needed.
+187: 
+188: Stage Summary:
+189: - All 8 assignment areas done: full-width console + portal + landing; References rename everywhere user-facing (incl. pre-submission check copy); role-gated review actions w/ notices & hints; sysadmin-only References/Tutorials editing; role-based nav + role badges; 4-account landing; barangay council card w/ 11 officials. Zero tsc/lint errors; all E2E scenarios pass; screenshots /tmp/{officer,staff,sysadmin,barangay,landing}.png. Key deviation: Tutorials read-only view for officer/staff shows an explanatory note instead of the list (admin tutorials GET is sysadmin-only backend-side); sysadmin 
+190: 
+191: ---
+192: Task ID: 13-a
+193: Agent: frontend-developer
+194: Task: Database Management module UI (mdrrmo-database.tsx) + Users module rewrite with role editing (mdrrmo-users.tsx)
+195: 
+196: Work Log:
+197: - Read worklog, api.ts contract, types.ts (ADMIN_ROLE_META/normalizeAdminRole/SessionInfo), db-tables.ts registry (field metadata shapes), mdrrmo-shared.tsx (useLoad/useDebounced/ErrorAlert/TableSkeleton/CopyButton), mdrrmo-audit.tsx (table-page + tokenRef fetch pattern), mdrrmo-users.tsx (old settings-API version). Inspected live API responses via curl (19 tables metadata, barangay_officials search/pagination, admin/users, CRUD roundtrip).
+198: - REPLACED src/components/qas33/mdrrmo-database.tsx (stub → full ~890-line implementation):
+199:   - Header ("Database Management" + System-Administrator-only subtitle + "N tables • N rows" chip) + destructive Alert banner (bypass workflows / audit-logged warning).
+200:   - Table picker: desktop sticky sidebar (lg:w-60) grouped by group with icons (Users/MapPin/ClipboardCheck/FileText/Settings2), label + count badges, active highlight; mobile (lg:hidden) grouped Select dropdown (SelectGroup/SelectLabel). Sidebar has own max-h scroll w/ custom scrollbar.
+201:   - Toolbar: table label + desc, searchable-fields + orderBy hint line, debounced search input (manual 400ms timer ref + Enter applies immediately; appliedSearch state avoids double-fetch on table switch), page size Select (25/50/100), Refresh (spins while busy), Add Row (primary).
+202:   - Rows fetched in useEffect w/ tokenRef guard (mdrrmo-audit pattern); busy/skeleton flags set ONLY in event handlers (react-hooks v6 safe). Table switch resets page/search and shows skeleton; pagination keeps rows dimmed (opacity-60).
+203:   - Data table: shadcn Table; columns = idField + top-7 by relevance score (non-readonly string/number > boolean > datetime > json > readonly) — fully metadata-driven, nothing hardcoded. Cells: datetime→formatDateTime, boolean→✓/— mini-badges, json→truncated(40) mono, fk→truncated mono, long strings truncate+title. Sticky header verified working via a `[&_[data-slot=table-container]]:overflow-visible` override (the Table wrapper's overflow-x div would otherwise be the sticky's scroll container); container max-h-[65vh] overflow-auto + custom scrollbar classes; min-w-[880px] for ho
+204:   - Row actions: Copy ID (clipboard+toast), Edit (Pencil), Delete (Trash2 destructive). Empty state ("No rows found" + search-adjust hint). Pagination footer "Showing X–Y of Z rows" + Prev/Next + "Page n / m".
+205:   - RowDialog (single reusable Add/Edit component, conditionally mounted so state resets per open, key = table+mode+rowId): renders per non-readonly field from metadata — string→Input, number→Input[type=number], boolean→Switch (create: sent only if touched so Prisma defaults apply), datetime→datetime-local (ISO↔local conversion helpers), json→Textarea (pretty-printed on edit, JSON.parse validated with inline error). Required marked *, optional/nullable hinted, field.help shown. fk:"barangays"→Select of barangays loaded ONCE via module-level cached promise (api.adminDatabaseRows
+206:   - Delete: destructive AlertDialog ("Delete this row?" + cannot-be-undone + cascade warning), spinner on confirm, steps back a page if last row of page deleted, toast + reload + count refresh.
+207: - REWROTE src/components/qas33/mdrrmo-users.tsx (settings-API version → dedicated /api/admin/users):
+208:   - Header "Users" + "Console accounts and role assignments — System Administrator only" + Add User button.
+209:   - "Roles & Permissions" card: 3-column grid of ADMIN_ROLE_META badges + descriptions (SysAdmin/Officer/Staff).
+210:   - Users table: Username mono, Name (+ "you" chip for self, "Default" chip for sysadmin), Position, Role badge (ADMIN_ROLE_META), Status Active/Disabled, Last Login formatDateTime, Actions dropdown (Edit User / Reset Password / Disable-Enable / Delete User).
+211:   - Guardrails per spec: Disable/Delete hidden for self; for username==="sysadmin" (non-self) rendered as disabled lookalike items with Tooltip "The default System Administrator account is protected" (ProtectedAction component — non-interactive span mimicking disabled DropdownMenuItem, since disabled Radix items swallow pointer events).
+212:   - Edit User dialog: Name, Position, Role Select (3 roles, ADMIN_ROLE_META labels + live description hint), Active Switch → adminUpdateUser → toast (role changes audited server-side). Reset Password dialog: min-8 validation, server message surfaced. Add User dialog: username 3+/name/password 8+/role select. Disable/Enable + destructive Delete confirmations. All dialogs conditionally mounted (state auto-resets on close), server guardrail errors (self-delete/sysadmin/last-admin) surfaced in destructive toasts.
+213: - Verification:
+214:   - bunx tsc --noEmit: 0 errors in my files (only pre-existing examples/ + skills/ errors remain). bunx eslint on both files + bun run lint: 0 errors. dev.log clean.
+215:   - SSR smoke test (bun renderToString, project-local React): both components render; all key markers present.
+216:   - curl: login sysadmin, /api/admin/database (19 tables), barangay_officials search=KAGAWAD (231 hits), /api/admin/users (3 roles), full create/update/delete roundtrip on tutorials/barangays/notifications + cleanup verified.
+217:   - agent-browser E2E (Database tab existed — parallel agent had already shipped mdrrmo-app.tsx): sidebar picker w/ counts, Barangay Officials table renders 363 rows, search KAGAWAD→231 + clear via keyboard, Edit dialog (barangay Select prefilled "PD-BRG-001 — Albasan", switches, readonly Created/Updated line) open/cancel, Add Row dialog (required stars, barangay Select, passwordHash type=password verified via DOM) → created "UI Test Official" → searched → deleted via confirm → empty state w/ search hint, pagination Next (26–50), page size 50 (Showing 1–50), sticky header ver
+218:   - Users E2E: Roles card, 3 users w/ badges + you/Default chips; staff menu has all 4 actions; self menu hides Disable/Delete; logged in as a second SYSTEM_ADMIN (created via UI Add User) → sysadmin row shows protected disabled items + tooltip on hover; role edit System Administrator→MDRRMO Officer persisted; Reset Password min-8 validation + success toast; Disable→"Disabled" status→Enable; Delete w/ destructive confirm → user gone. Test user + test rows cleaned up (users back to mdrrmo/sysadmin/staff).
+219:   - Fixed one React console warning found during testing (barangay Select uncontrolled→controlled) by always passing a string value.
+220:   - VLM visual QA on desktop DB, Users and mobile screenshots: clean, professional, no overlap/clipping defects (mobile intentionally dense w/ horizontal scroll).
+221: 
+222: Stage Summary:
+223: - Files modified (only these 2): src/components/qas33/mdrrmo-database.tsx (full implementation), src/components/qas33/mdrrmo-users.tsx (rewrite). No other files touched.
+224: - Everything is metadata-driven from /api/admin/database — adding/renaming tables or fields in db-tables.ts requires no UI changes.
+225: - NOTE for backend owner (13-backend): tutorials.order is Int (non-nullable, NO Prisma default) but marked non-required in db-tables.ts → creating a Tutorial row without order returns a raw Prisma "Invalid create() invocation" error. Suggest marking it required in the registry or adding @default in the schema. My UI surfaces the error in a destructive toast, so it is not breaking.
+226: - Demo notes: Database tab visible only to SYSTEM_ADMIN (nav gating in mdrrmo-app.tsx); Users module likewise. Audit trail records DB_CREATE/DB_UPDATE/DB_DELETE with "via Database Management" detail.
+227: 
+228: ---
+229: Task ID: 13-final
+230: Agent: main
+231: Task: Integration fixes, final verification, re-seed
+232: 
+233: Work Log:
+234: - Fixed db-tables.ts registry: order fields marked required (template_sections, rating_criteria, tutorials — non-nullable Int without Prisma default; reported by 13-a).
+235: - Re-seeded DB after all agents finished (removes test mutations; restores pristine demo narrative).
+236: - Full verification: bunx tsc --noEmit → 0 src errors; bun run lint → 0 errors; dev.log clean (only stale pre-fix Prisma errors).
+237: - agent-browser E2E (session "final"): landing full-width + 4 demo accounts accordion (PD-BRG-006, mdrrmo, staff, sysadmin); sysadmin login → System Administrator badge, nav includes Users/Settings/Database + renamed References; Database Management module: 19 tables/558 rows, Barangay Officials table (363 rows), Edit dialog with barangay Select prefilled, save works; Users module: 3 users with role badges, Roles & Permissions card, you/Default chips; officer login (Noel F. Ordona, MDRRMO Officer badge, NO Users/Settings/Database nav), submission detail shows Start Review/Request Revision/App
+238: - VLM visual audit (council card + mobile barangay, database + users): full-width, professional, no overlap/clipping, badges/tables render correctly.
+239: 
+240: Stage Summary:
+241: - ALL user requirements delivered and browser-verified:
+242:   1. Full-width pages (landing, barangay portal, MDRRMO console).
+243:   2. Database Management module (19 tables, search/pagination/CRUD, audit-logged) — SYSTEM_ADMIN only.
+244:   3. MDRRMO Staff role added (Jun Carlo Anasco, staff/Staff2026!) — assists review, cannot approve/finalize.
+245:   4. System admin credentials created & default admin (Tho Pogi, sysadmin/SysAdmin2026!) — protected from deletion/demotion.
+246:   5. Only System Administrator can edit roles (Users module), configure all settings (Settings + References + Tutorials), and CRUD the database.
+247:   6. MDRRMO Officer (Noel F. Ordona, mdrrmo/PioDuran2026!) — reviews AND approves BDRRMP (rate/approve/sign/finalize).
+248:   7. Requirements module renamed to References (admin + barangay UIs).
+249:   8. 33 real barangay names + council members: barangay names are the official 33 of Pio Duran; council members are realistic PLACEHOLDERS (the referenced PDF official-list_05_2026-09-24.pdf was NOT found on the server — upload folder empty). 363 officials seeded (11/barangay), editable via Database Management (barangay_officials table) or re-seed when the official list is provided.
